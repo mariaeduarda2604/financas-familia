@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Livro-Caixa da Família</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@500;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  html, body { margin:0; padding:0; background:#f4f6f8; }
+  #app-root {
+    --paper: #f4f6f8;
+    --paper-line: #e3e7eb;
+    --ink: #1e2b3a;
+    --ink-soft: #667085;
+    --ledger-green: #0f9d8e;
+    --ledger-green-dark: #0b7568;
+    --heading: #16324a;
+    --stamp-red: #dc2626;
+    --stamp-green: #16a34a;
+    --gold: #d97706;
+    --card-bg: #ffffff;
+    --input-bg: #ffffff;
+    --tab-inactive-bg: #e6eaee;
+    --highlight-bg: #fff4e5;
+    --badge-bg: #eef1f4;
+    --badge-color: #445064;
+    --badge-fatura-bg: #fdecd8;
+    --badge-fatura-color: #92400e;
+    --shadow: rgba(16, 24, 40, 0.08);
+    font-family: 'Inter', -apple-system, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    min-height: 100vh;
+    padding: 0;
+  }
+  #app-root * { box-sizing: border-box; }
+  #app-root .mono { font-family: 'IBM Plex Mono', 'Courier New', monospace; }
+
+  #app-root .cover {
+    background: linear-gradient(135deg, #0f9d8e 0%, #0b6e63 100%);
+    color: #ffffff;
+    padding: 20px 24px 0 24px;
+    border-bottom: 4px solid var(--gold);
+  }
+  #app-root .cover-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; }
+  #app-root .cover h1 { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 23px; margin: 0 0 3px 0; color: #ffffff; }
+  #app-root .cover p { margin: 0 0 16px 0; color: rgba(255,255,255,0.85); font-size: 13px; }
+  #app-root .sync-note { font-size: 11px; color: rgba(255,255,255,0.75); margin: -10px 0 12px 0; }
+  #app-root .user-bar { font-size: 12px; color: rgba(255,255,255,0.85); text-align:right; }
+  #app-root .user-bar .email { color: #ffffff; font-weight:600; display:block; margin-bottom:4px; }
+  #app-root .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  #app-root .tab-btn {
+    font-family: 'Inter', sans-serif; background: rgba(255,255,255,0.18); color: #ffffff;
+    border: none; padding: 10px 18px; border-radius: 8px 8px 0 0; cursor: pointer;
+    font-size: 13.5px; font-weight: 600; opacity: 0.82; transform: translateY(2px); transition: all .15s;
+  }
+  #app-root .tab-btn.active { background: var(--paper); color: var(--heading); opacity: 1; transform: translateY(0); box-shadow: 0 -2px 6px var(--shadow); }
+  #app-root .tab-btn:hover { opacity: 1; }
+
+  #app-root .panel { padding: 24px 24px 48px 24px; max-width: 920px; margin: 0 auto; }
+  #app-root h2 {
+    font-family: 'Inter', sans-serif; font-weight: 700; font-size: 17px; color: var(--heading);
+    margin: 0 0 4px 0; border-bottom: 2px solid var(--paper-line); padding-bottom: 8px;
+  }
+  #app-root h3 { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 14px; color: var(--heading); margin: 0 0 8px 0; }
+  #app-root .subtext { color: var(--ink-soft); font-size: 13px; margin: 6px 0 16px 0; }
+
+  #app-root .card { background: var(--card-bg); border: 1px solid var(--paper-line); border-radius: 10px; padding: 15px 17px; margin-bottom: 13px; box-shadow: 0 1px 3px var(--shadow); position: relative; }
+  #app-root .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  #app-root .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  #app-root .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 640px) { #app-root .grid2, #app-root .grid3, #app-root .grid4 { grid-template-columns: 1fr; } }
+
+  #app-root label { display: block; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+  #app-root input, #app-root select {
+    width: 100%; font-family: inherit; font-size: 14px; padding: 9px 10px; border: 1px solid #d6dbe1;
+    border-radius: 6px; background: var(--input-bg); color: var(--ink); margin-bottom: 12px;
+  }
+  #app-root input:focus, #app-root select:focus { outline: 2px solid var(--ledger-green); outline-offset: 1px; }
+  #app-root .btn { font-family: 'Inter', sans-serif; background: var(--ledger-green); color: #ffffff; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 13.5px; font-weight: 700; }
+  #app-root .btn:hover { background: var(--ledger-green-dark); }
+  #app-root .btn.secondary { background: transparent; color: var(--ledger-green-dark); border: 1.5px solid var(--ledger-green); }
+  #app-root .btn.danger { background: transparent; color: var(--stamp-red); border: 1.5px solid var(--stamp-red); padding: 5px 10px; font-size: 12px; }
+  #app-root .btn.small { padding: 6px 12px; font-size: 12px; }
+  #app-root .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  #app-root .lancamento-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--paper-line); font-size: 13.5px; gap: 10px; }
+  #app-root .lancamento-row:last-child { border-bottom: none; }
+  #app-root .lanc-meta { color: var(--ink-soft); font-size: 12px; }
+  #app-root .badge { display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:10px; background:var(--badge-bg); color:var(--badge-color); font-weight:600; margin-left:6px; }
+  #app-root .badge.fatura { background:var(--badge-fatura-bg); color:var(--badge-fatura-color); }
+
+  #app-root .stat-card { background: var(--card-bg); border: 1px solid var(--paper-line); border-radius: 10px; padding: 13px 15px; text-align: center; }
+  #app-root .stat-card .num { font-family: 'IBM Plex Mono', monospace; font-size: 20px; font-weight: 700; color: var(--ink); }
+  #app-root .stat-card .lbl { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .4px; margin-top: 2px; }
+  #app-root .stat-card.pos .num { color: var(--stamp-green); }
+  #app-root .stat-card.neg .num { color: var(--stamp-red); }
+  #app-root .stat-card.warn { background: var(--highlight-bg); }
+  #app-root .stat-card.warn .num { color: var(--gold); }
+
+  #app-root .stamp {
+    position: absolute; top: 12px; right: 14px; color: #ffffff;
+    font-family: 'Inter', sans-serif; font-weight: 700; font-size: 11px; padding: 3px 11px; border-radius: 20px;
+    letter-spacing: .5px; background: var(--stamp-red);
+  }
+  #app-root .stamp.green { background: var(--stamp-green); }
+  #app-root .stamp.orange { background: var(--gold); }
+
+  #app-root .month-nav { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+  #app-root .month-label { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 15px; color: var(--heading); min-width: 160px; text-align: center; }
+  #app-root .info-box { background: var(--highlight-bg); border-left: 4px solid var(--gold); padding: 12px 14px; border-radius: 6px; font-size: 12.5px; color: #7a5211; margin-bottom: 16px; }
+  #app-root .empty { color: var(--ink-soft); font-size: 13px; font-style: italic; padding: 8px 0; }
+  #app-root .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 6px; color: var(--ink); }
+  #app-root .legend-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+  #app-root .mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  #app-root .mini-table th { text-align: left; color: var(--ink-soft); font-size: 11px; text-transform: uppercase; padding-bottom: 6px; border-bottom: 1px solid var(--paper-line); }
+  #app-root .mini-table td { padding: 6px 4px; border-bottom: 1px solid var(--paper-line); color: var(--ink); }
+
+  /* ---- tela de login ---- */
+  #app-root .login-wrap { min-height: 100vh; display:flex; align-items:center; justify-content:center; padding:20px; background: var(--paper); }
+  #app-root .login-card { background: var(--card-bg); border:1px solid var(--paper-line); border-radius:14px; padding:32px 28px; max-width:380px; width:100%; box-shadow:0 8px 24px var(--shadow); }
+  #app-root .login-card h1 { font-family:'Inter', sans-serif; font-weight:700; font-size:20px; color:var(--heading); margin:0 0 4px 0; text-align:center; }
+  #app-root .login-card p.sub { color:var(--ink-soft); font-size:12.5px; text-align:center; margin:0 0 22px 0; }
+  #app-root .login-msg { font-size:12.5px; margin: -6px 0 12px 0; min-height:16px; }
+  #app-root .login-msg.err { color: var(--stamp-red); }
+  #app-root .login-msg.ok { color: var(--stamp-green); }
+  #app-root .login-actions { display:flex; gap:8px; margin-top:6px; }
+  #app-root .login-actions .btn { flex:1; }
+  #app-root .setup-warning { max-width:520px; margin:60px auto; background:var(--highlight-bg); border-left:4px solid var(--gold); padding:20px 22px; border-radius:8px; font-size:13.5px; line-height:1.6; color: var(--ink); }
+  #app-root .setup-warning code { background:#f1f1f1; padding:1px 6px; border-radius:4px; }
+</style>
+</head>
+<body>
+<div id="app-root"></div>
+
+<script>
+(function(){
+  // ============================================================
+  // CONFIGURAÇÃO — cole aqui a URL e a chave "anon" do seu projeto Supabase
+  // (Painel do Supabase → Project Settings → API)
+  // ============================================================
+  const SUPABASE_URL = 'https://uolgdimkxmehleiyvqwm.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVvbGdkaW1reG1laGxlaXl2cXdtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0NDU3NDMsImV4cCI6MjA5OTAyMTc0M30.PXe0ImoWwWRZ39Zpr901IgPSzqxXQmtXIpaYRtSZvEs';
+  // ============================================================
+
+  const PALETTE = ['#0f9d8e','#2563eb','#d97706','#16a34a','#7c3aed','#0891b2','#e11d48',
+                    '#4f46e5','#ea580c','#059669','#3b82f6','#a855f7','#0d9488','#db2777','#ca8a04'];
+
+  const DEFAULT_CATEGORIAS = [
+    {id:'cartao_duda', nome:'Cartão Duda', tipo:'Cartão de Crédito', diaVencimento:null, valorEsperado:0, isFatura:true},
+    {id:'cartao_7700', nome:'Cartão 7700', tipo:'Cartão de Crédito', diaVencimento:null, valorEsperado:0, isFatura:true},
+    {id:'emp_mp', nome:'Empréstimo Mercado Pago', tipo:'Empréstimo', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'emp_itau', nome:'Empréstimo Itaú', tipo:'Empréstimo', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'emprestimo_duda', nome:'Empréstimo Duda', tipo:'Empréstimo', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'suelem', nome:'Suelem', tipo:'Pessoal', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'nivaldo', nome:'Nivaldo', tipo:'Pessoal', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'gastos_duda', nome:'Gastos Duda', tipo:'Variável', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'parcela_casa', nome:'Parcela da Casa', tipo:'Financiamento', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'iptu', nome:'IPTU', tipo:'Imposto', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'seguro_carro', nome:'Seguro do Carro', tipo:'Seguro', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'codau', nome:'Codau (Água)', tipo:'Recorrente', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'cemig', nome:'Cemig (Energia)', tipo:'Recorrente', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'internet', nome:'Internet', tipo:'Recorrente', diaVencimento:null, valorEsperado:0, isFatura:false},
+    {id:'gastos_eventuais', nome:'Gastos Eventuais', tipo:'Variável', diaVencimento:null, valorEsperado:0, isFatura:false},
+  ];
+
+  function defaultState(){
+    return { categorias: DEFAULT_CATEGORIAS.map(c => ({...c})), lancamentos: [], rendaPorMes: {}, contasPagas: {}, faturas: {} };
+  }
+
+  let state = defaultState();
+  let activeTab = 'lancar';
+  let resumoCursor = new Date(); resumoCursor.setDate(1);
+  let currentUser = null;
+  let sb = null;
+  let realtimeChannel = null;
+
+  // ---------- helpers de data/dinheiro ----------
+  function pad2(n){ return n < 10 ? '0'+n : ''+n; }
+  function todayYMD(){ const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+  function parseYMD(s){ if(!s) return null; const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); }
+  function monthKey(date){ return `${date.getFullYear()}-${pad2(date.getMonth()+1)}`; }
+  function monthIndex(mk){ const [y,m] = mk.split('-').map(Number); return y*12+m; }
+  function addMonthsToMK(mk, n){ const idx = monthIndex(mk)+n; const y = Math.floor((idx-1)/12); const m = idx-y*12; return `${y}-${pad2(m)}`; }
+  function fmtMoney(v){ v = Number(v)||0; return v.toLocaleString('pt-BR', {style:'currency', currency:'BRL'}); }
+  function fmtDateBR(ymd){ if(!ymd) return '—'; const d = parseYMD(ymd); return `${pad2(d.getDate())}/${pad2(d.getMonth()+1)}/${d.getFullYear()}`; }
+  function fmtMK(mk){ const [y,m] = mk.split('-').map(Number); return `${MESES[m-1].slice(0,3)}/${y}`; }
+  const MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  function escapeHtml(s){ const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function getCat(id){ return state.categorias.find(c => c.id === id); }
+  function catName(id){ const c = getCat(id); return c ? c.nome : '(categoria removida)'; }
+
+  // ---------- lógica de parcelas ----------
+  function occurrencesOf(l){
+    const start = parseYMD(l.data);
+    const total = l.parcelasTotal || 1;
+    const atual = l.parcelaAtual || 1;
+    const n = Math.max(1, total - atual + 1);
+    const arr = [];
+    for (let i=0;i<n;i++){
+      const d = new Date(start.getFullYear(), start.getMonth()+i, start.getDate());
+      arr.push({ mk: monthKey(d), parcelaNum: atual+i, date: d });
+    }
+    return arr;
+  }
+  function getGastoCategoriaMes(catId, mk){
+    const cat = getCat(catId);
+    if (!cat) return 0;
+    if (cat.isFatura) {
+      const f = state.faturas[catId];
+      return (f && f[mk] !== undefined) ? Number(f[mk])||0 : 0;
+    }
+    let total = 0;
+    state.lancamentos.filter(l => l.categoriaId === catId).forEach(l => {
+      occurrencesOf(l).forEach(o => { if (o.mk === mk) total += Number(l.valor||0); });
+    });
+    return total;
+  }
+  function planStatusAt(l, mk){
+    const total = l.parcelasTotal || 1;
+    const atual0 = l.parcelaAtual || 1;
+    const startMK = monthKey(parseYMD(l.data));
+    const passed = monthIndex(mk) - monthIndex(startMK);
+    const parcelaAgora = atual0 + passed;
+    const restante = total - parcelaAgora;
+    return { parcelaAgora, total, restante, finished: parcelaAgora > total || passed < 0 };
+  }
+
+  // ============================================================
+  // CAMADA DE DADOS (Supabase)
+  // ============================================================
+  async function fetchAll(){
+    const [catR, lancR, rendaR, pagasR, faturasR] = await Promise.all([
+      sb.from('categorias').select('*'),
+      sb.from('lancamentos').select('*'),
+      sb.from('renda_mensal').select('*'),
+      sb.from('contas_pagas').select('*'),
+      sb.from('faturas').select('*'),
+    ]);
+    if (catR.data && catR.data.length){
+      state.categorias = catR.data.map(r => ({
+        id: r.id, nome: r.nome, tipo: r.tipo,
+        diaVencimento: r.dia_vencimento, valorEsperado: Number(r.valor_esperado)||0, isFatura: !!r.is_fatura
+      }));
+    }
+    state.lancamentos = (lancR.data||[]).map(r => ({
+      id: r.id, categoriaId: r.categoria_id, valor: Number(r.valor)||0, data: r.data, descricao: r.descricao || '',
+      parcelaAtual: r.parcela_atual||1, parcelasTotal: r.parcelas_total||1, criadoEm: r.criado_em, criadoPor: r.criado_por
+    }));
+    state.rendaPorMes = {};
+    (rendaR.data||[]).forEach(r => { state.rendaPorMes[r.mes] = Number(r.valor)||0; });
+    state.contasPagas = {};
+    (pagasR.data||[]).forEach(r => { state.contasPagas[r.mes] = state.contasPagas[r.mes]||[]; state.contasPagas[r.mes].push(r.categoria_id); });
+    state.faturas = {};
+    (faturasR.data||[]).forEach(r => { state.faturas[r.categoria_id] = state.faturas[r.categoria_id]||{}; state.faturas[r.categoria_id][r.mes] = Number(r.valor)||0; });
+  }
+
+  async function criarLancamento(obj){
+    return sb.from('lancamentos').insert({
+      categoria_id: obj.categoriaId, valor: obj.valor, data: obj.data, descricao: obj.descricao,
+      parcela_atual: obj.parcelaAtual, parcelas_total: obj.parcelasTotal,
+      criado_por: currentUser ? currentUser.email : null
+    });
+  }
+  async function excluirLancamento(id){ return sb.from('lancamentos').delete().eq('id', id); }
+  async function salvarFaturaEMarcarPaga(categoriaId, mes, valor){
+    const r1 = await sb.from('faturas').upsert({ categoria_id: categoriaId, mes, valor });
+    if (r1.error) return r1;
+    return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId });
+  }
+  async function salvarRenda(mes, valor){ return sb.from('renda_mensal').upsert({ mes, valor }); }
+  async function toggleContaPaga(mes, categoriaId, marcarPaga){
+    if (marcarPaga) return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId });
+    return sb.from('contas_pagas').delete().eq('mes', mes).eq('categoria_id', categoriaId);
+  }
+  async function salvarConfigCategoria(id, diaVencimento, valorEsperado){
+    return sb.from('categorias').update({ dia_vencimento: diaVencimento, valor_esperado: valorEsperado }).eq('id', id);
+  }
+  function slugify(nome){
+    return nome.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || ('cat_'+Date.now());
+  }
+  async function criarCategoria(nome, tipo, isFatura){
+    let id = slugify(nome);
+    const existente = state.categorias.find(c => c.id === id);
+    if (existente) id = id + '_' + Math.random().toString(36).slice(2,5);
+    return sb.from('categorias').insert({ id, nome, tipo: tipo || 'Outros', dia_vencimento: null, valor_esperado: 0, is_fatura: !!isFatura });
+  }
+
+  async function refrescarEexibir(){ await fetchAll(); render(); }
+
+  function mostrarErro(err){
+    alert('Não consegui salvar: ' + (err && err.message ? err.message : 'erro desconhecido. Verifique sua conexão e tente novamente.'));
+  }
+
+  function isTypingInApp(){
+    const el = document.activeElement;
+    if (!el) return false;
+    const root = document.getElementById('app-root');
+    return root.contains(el) && (el.tagName === 'INPUT' || el.tagName === 'SELECT');
+  }
+  async function onRemoteChange(){
+    if (isTypingInApp()) return;
+    await refrescarEexibir();
+  }
+  function subscribeRealtime(){
+    if (realtimeChannel) return;
+    realtimeChannel = sb.channel('financas-changes')
+      .on('postgres_changes', { event:'*', schema:'public', table:'lancamentos' }, onRemoteChange)
+      .on('postgres_changes', { event:'*', schema:'public', table:'renda_mensal' }, onRemoteChange)
+      .on('postgres_changes', { event:'*', schema:'public', table:'contas_pagas' }, onRemoteChange)
+      .on('postgres_changes', { event:'*', schema:'public', table:'faturas' }, onRemoteChange)
+      .on('postgres_changes', { event:'*', schema:'public', table:'categorias' }, onRemoteChange)
+      .subscribe();
+  }
+  function unsubscribeRealtime(){ if (realtimeChannel){ sb.removeChannel(realtimeChannel); realtimeChannel = null; } }
+
+  // ============================================================
+  // TELA DE LOGIN
+  // ============================================================
+  function renderLogin(msg, isErr){
+    const root = document.getElementById('app-root');
+    root.innerHTML = `
+      <div class="login-wrap">
+        <div class="login-card">
+          <h1>📒 Livro-Caixa da Família</h1>
+          <p class="sub">Entre com seu e-mail para acessar os gastos da família.</p>
+          <div class="login-msg ${isErr ? 'err' : 'ok'}">${msg || ''}</div>
+          <label>E-mail</label>
+          <input type="email" id="login-email" placeholder="voce@exemplo.com">
+          <label>Senha</label>
+          <input type="password" id="login-senha" placeholder="mínimo 6 caracteres">
+          <div class="login-actions">
+            <button class="btn secondary" id="btn-signup">Criar conta</button>
+            <button class="btn" id="btn-login">Entrar</button>
+          </div>
+        </div>
+      </div>
+    `;
+    root.querySelector('#btn-login').addEventListener('click', async () => {
+      const email = root.querySelector('#login-email').value.trim();
+      const senha = root.querySelector('#login-senha').value;
+      if (!email || !senha) { renderLogin('Preencha e-mail e senha.', true); return; }
+      const { error } = await sb.auth.signInWithPassword({ email, password: senha });
+      if (error) renderLogin(traduzErro(error.message), true);
+    });
+    root.querySelector('#btn-signup').addEventListener('click', async () => {
+      const email = root.querySelector('#login-email').value.trim();
+      const senha = root.querySelector('#login-senha').value;
+      if (!email || !senha) { renderLogin('Preencha e-mail e senha.', true); return; }
+      if (senha.length < 6) { renderLogin('A senha precisa ter pelo menos 6 caracteres.', true); return; }
+      const { data, error } = await sb.auth.signUp({ email, password: senha });
+      if (error) { renderLogin(traduzErro(error.message), true); return; }
+      if (data.session) { /* login automático já acontece via onAuthStateChange */ }
+      else renderLogin('Conta criada! Verifique seu e-mail para confirmar antes de entrar.', false);
+    });
+  }
+  function traduzErro(msg){
+    if (/already registered/i.test(msg)) return 'Este e-mail já tem cadastro. Tente entrar em vez de criar conta.';
+    if (/invalid login credentials/i.test(msg)) return 'E-mail ou senha incorretos.';
+    if (/email not confirmed/i.test(msg)) return 'Confirme seu e-mail antes de entrar (veja a caixa de entrada).';
+    return msg;
+  }
+
+  // ============================================================
+  // RENDER PRINCIPAL
+  // ============================================================
+  function render(){
+    const root = document.getElementById('app-root');
+    const scrollY = window.scrollY;
+    root.innerHTML = `
+      <div class="cover">
+        <div class="cover-top">
+          <div>
+            <h1>📒 Livro-Caixa da Família</h1>
+            <p>Lance gastos na hora, veja o quanto sobra no mês e fique de olho nas contas.</p>
+          </div>
+          <div class="user-bar">
+            <span class="email">${currentUser ? escapeHtml(currentUser.email) : ''}</span>
+            <button class="btn secondary small" id="btn-logout">Sair</button>
+          </div>
+        </div>
+        <div class="sync-note">🔄 Banco de dados online — mudanças de qualquer familiar aparecem automaticamente.</div>
+        <div class="tabs">
+          <button class="tab-btn ${activeTab==='lancar'?'active':''}" data-tab="lancar">Lançar Gasto</button>
+          <button class="tab-btn ${activeTab==='resumo'?'active':''}" data-tab="resumo">Resumo do Mês</button>
+          <button class="tab-btn ${activeTab==='contas'?'active':''}" data-tab="contas">Contas a Vencer</button>
+        </div>
+      </div>
+      <div class="panel" id="panel-content"></div>
+    `;
+    root.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => { activeTab = btn.dataset.tab; render(); }));
+    root.querySelector('#btn-logout').addEventListener('click', async () => { await sb.auth.signOut(); });
+    const panel = document.getElementById('panel-content');
+    if (activeTab === 'lancar') renderLancar(panel);
+    else if (activeTab === 'resumo') renderResumo(panel);
+    else if (activeTab === 'contas') renderContas(panel);
+    window.scrollTo(0, scrollY);
+  }
+
+  // ---------- TAB: LANÇAR GASTO ----------
+  function renderLancar(panel){
+    const opts = state.categorias.map(c => `<option value="${c.id}">${c.nome}${c.isFatura ? ' (fatura)' : ''}</option>`).join('');
+    const cartoes = state.categorias.filter(c => c.isFatura);
+    const hoje = new Date(); const mkAtual = monthKey(hoje);
+
+    const ultimos = [...state.lancamentos]
+      .sort((a,b) => (b.data+(b.criadoEm||'')).localeCompare(a.data+(a.criadoEm||'')))
+      .slice(0, 25);
+
+    panel.innerHTML = `
+      <h2>Lançar Gasto ou Parcela</h2>
+      <p class="subtext">Registre um gasto assim que ele acontecer. Se ele tiver parcelas (empréstimo, financiamento, compra parcelada), informe o total de parcelas — as próximas aparecem sozinhas em "Contas a Vencer" nos meses seguintes.</p>
+      <div class="card">
+        <div class="grid2">
+          <div>
+            <label>Categoria</label>
+            <select id="f-categoria">${opts}</select>
+          </div>
+          <div>
+            <label>Valor da parcela (R$)</label>
+            <input type="number" id="f-valor" step="0.01" min="0" placeholder="0,00">
+          </div>
+        </div>
+        <div class="grid3">
+          <div>
+            <label>Data desta parcela</label>
+            <input type="date" id="f-data" value="${todayYMD()}">
+          </div>
+          <div>
+            <label>Esta é a parcela nº</label>
+            <input type="number" id="f-parcela-atual" min="1" value="1">
+          </div>
+          <div>
+            <label>Total de parcelas</label>
+            <input type="number" id="f-parcela-total" min="1" value="1">
+          </div>
+        </div>
+        <label>Descrição (opcional)</label>
+        <input type="text" id="f-desc" placeholder="Ex.: mercado, farmácia, compra da TV...">
+        <button class="btn" id="btn-lancar">+ Lançar</button>
+        <span id="f-msg" style="margin-left:10px; font-size:12.5px; color:var(--stamp-green);"></span>
+        <p class="lanc-meta" style="margin-top:8px;">Dica: para um gasto único (sem parcelas), deixe "parcela nº" = 1 e "total de parcelas" = 1.</p>
+      </div>
+
+      <h2 style="margin-top:26px;">Fechar Fatura do Cartão</h2>
+      <div class="info-box">
+        As compras parceladas lançadas acima em <strong>Cartão Duda</strong> ou <strong>Cartão 7700</strong> servem só para
+        controle do que vem pela frente — elas <strong>não entram automaticamente</strong> no total do mês.
+        Quando a fatura fechar, lance aqui o valor total real cobrado no cartão.
+      </div>
+      <div class="card">
+        <div class="grid2">
+          ${cartoes.map(c => `
+            <div>
+              <label>${c.nome} — fatura de ${fmtMK(mkAtual)}</label>
+              <input type="number" step="0.01" min="0" id="f-fatura-${c.id}" value="${(state.faturas[c.id]&&state.faturas[c.id][mkAtual]!==undefined)?state.faturas[c.id][mkAtual]:''}" placeholder="0,00">
+            </div>
+          `).join('')}
+        </div>
+        <button class="btn small" id="btn-salvar-fatura">Salvar fatura(s) deste mês</button>
+      </div>
+
+      <h2 style="margin-top:26px;">Últimos Lançamentos</h2>
+      <div class="card">
+        ${ultimos.length === 0 ? '<div class="empty">Nenhum gasto lançado ainda.</div>' : ultimos.map(l => {
+          const cat = getCat(l.categoriaId);
+          const parcelaTxt = (l.parcelasTotal>1) ? `<span class="badge ${cat&&cat.isFatura?'fatura':''}">${l.parcelaAtual}/${l.parcelasTotal}x</span>` : '';
+          return `
+          <div class="lancamento-row">
+            <div>
+              <div>${catName(l.categoriaId)}${parcelaTxt}${l.descricao ? ' — ' + escapeHtml(l.descricao) : ''}</div>
+              <div class="lanc-meta">${fmtDateBR(l.data)}${l.criadoPor ? ' · lançado por ' + escapeHtml(l.criadoPor) : ''}</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <strong class="mono">${fmtMoney(l.valor)}</strong>
+              <button class="btn danger" data-del="${l.id}">excluir</button>
+            </div>
+          </div>
+        `; }).join('')}
+      </div>
+    `;
+
+    panel.querySelector('#btn-lancar').addEventListener('click', async () => {
+      const categoriaId = panel.querySelector('#f-categoria').value;
+      const valor = parseFloat(panel.querySelector('#f-valor').value);
+      const data = panel.querySelector('#f-data').value || todayYMD();
+      const parcelaAtual = parseInt(panel.querySelector('#f-parcela-atual').value,10) || 1;
+      const parcelasTotal = parseInt(panel.querySelector('#f-parcela-total').value,10) || 1;
+      const descricao = panel.querySelector('#f-desc').value.trim();
+      const msg = panel.querySelector('#f-msg');
+      if (!valor || valor <= 0) { msg.style.color = 'var(--stamp-red)'; msg.textContent = 'Informe um valor válido.'; return; }
+      if (parcelasTotal < parcelaAtual) { msg.style.color = 'var(--stamp-red)'; msg.textContent = 'Total de parcelas não pode ser menor que a parcela atual.'; return; }
+      const btn = panel.querySelector('#btn-lancar'); btn.disabled = true;
+      const { error } = await criarLancamento({ categoriaId, valor, data, descricao, parcelaAtual, parcelasTotal });
+      btn.disabled = false;
+      if (error) { msg.style.color = 'var(--stamp-red)'; msg.textContent = 'Erro ao salvar: ' + error.message; return; }
+      msg.style.color = 'var(--stamp-green)'; msg.textContent = 'Lançado!';
+      await refrescarEexibir();
+    });
+
+    panel.querySelector('#btn-salvar-fatura').addEventListener('click', async () => {
+      try {
+        for (const c of cartoes) {
+          const input = panel.querySelector(`#f-fatura-${c.id}`);
+          const v = parseFloat(input.value);
+          if (input.value !== '' && !isNaN(v)) {
+            const { error } = await salvarFaturaEMarcarPaga(c.id, mkAtual, v);
+            if (error) throw error;
+          }
+        }
+        await refrescarEexibir();
+      } catch (err) { mostrarErro(err); }
+    });
+
+    panel.querySelectorAll('[data-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const { error } = await excluirLancamento(btn.dataset.del);
+          if (error) throw error;
+          await refrescarEexibir();
+        } catch (err) { mostrarErro(err); }
+      });
+    });
+  }
+
+  // ---------- TAB: RESUMO DO MÊS ----------
+  function buildDonutSVG(ranking, total){
+    if (!ranking.length || total <= 0) return '<div class="empty">Nenhum gasto lançado neste mês ainda.</div>';
+    const cx = 90, cy = 90, r = 70, rInner = 40;
+    let angle = -Math.PI/2;
+    let paths = '';
+    ranking.forEach(([id, val], i) => {
+      const frac = val/total;
+      const next = angle + frac*Math.PI*2;
+      const x1 = cx + r*Math.cos(angle), y1 = cy + r*Math.sin(angle);
+      const x2 = cx + r*Math.cos(next), y2 = cy + r*Math.sin(next);
+      const xi1 = cx + rInner*Math.cos(next), yi1 = cy + rInner*Math.sin(next);
+      const xi2 = cx + rInner*Math.cos(angle), yi2 = cy + rInner*Math.sin(angle);
+      const large = (next-angle) > Math.PI ? 1 : 0;
+      const color = PALETTE[i % PALETTE.length];
+      paths += `<path d="M${x1},${y1} A${r},${r} 0 ${large} 1 ${x2},${y2} L${xi1},${yi1} A${rInner},${rInner} 0 ${large} 0 ${xi2},${yi2} Z" fill="${color}" stroke="var(--card-bg)" stroke-width="1.5"/>`;
+      angle = next;
+    });
+    return `<svg width="180" height="180" viewBox="0 0 180 180">${paths}
+      <text x="90" y="86" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink)" font-weight="600">Total</text>
+      <text x="90" y="102" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-soft)">${fmtMoney(total).replace('R$','R$ ')}</text>
+    </svg>`;
+  }
+
+  function renderResumo(panel){
+    const mk = monthKey(resumoCursor);
+    const label = `${MESES[resumoCursor.getMonth()]} de ${resumoCursor.getFullYear()}`;
+    const renda = state.rendaPorMes[mk] || 0;
+
+    const porCategoria = {};
+    state.categorias.forEach(c => {
+      const v = getGastoCategoriaMes(c.id, mk);
+      if (v > 0) porCategoria[c.id] = v;
+    });
+    const ranking = Object.entries(porCategoria).sort((a,b) => b[1]-a[1]);
+    const totalGasto = ranking.reduce((s,[,v]) => s+v, 0);
+    const saldo = renda - totalGasto;
+
+    let proxMeses = [];
+    for (let i=0;i<6;i++){
+      const mkFut = addMonthsToMK(monthKey(new Date()), i);
+      let totalFut = 0, estimativaFatura = 0;
+      state.categorias.forEach(c => {
+        if (c.isFatura) {
+          const f = state.faturas[c.id];
+          if (f && f[mkFut] !== undefined) totalFut += Number(f[mkFut])||0;
+          else {
+            state.lancamentos.filter(l => l.categoriaId===c.id).forEach(l => {
+              occurrencesOf(l).forEach(o => { if (o.mk===mkFut) estimativaFatura += Number(l.valor||0); });
+            });
+          }
+        } else {
+          totalFut += getGastoCategoriaMes(c.id, mkFut);
+        }
+      });
+      proxMeses.push({ mk: mkFut, total: totalFut, estimativaFatura });
+    }
+
+    panel.innerHTML = `
+      <h2>Resumo do Mês</h2>
+      <div class="month-nav">
+        <button class="btn secondary small" id="btn-prev-mes">‹ mês anterior</button>
+        <div class="month-label">${label}</div>
+        <button class="btn secondary small" id="btn-next-mes">próximo mês ›</button>
+      </div>
+
+      <div class="card">
+        <label>Dinheiro disponível este mês (renda / entradas)</label>
+        <input type="number" id="f-renda" step="0.01" min="0" value="${renda || ''}" placeholder="0,00">
+        <button class="btn small" id="btn-salvar-renda">Salvar renda do mês</button>
+      </div>
+
+      <div class="grid3" style="margin: 18px 0;">
+        <div class="stat-card"><div class="num mono">${fmtMoney(renda)}</div><div class="lbl">Renda do mês</div></div>
+        <div class="stat-card neg"><div class="num mono">${fmtMoney(totalGasto)}</div><div class="lbl">Gastos lançados</div></div>
+        <div class="stat-card ${saldo >= 0 ? 'pos' : 'neg'}"><div class="num mono">${fmtMoney(saldo)}</div><div class="lbl">Saldo disponível</div></div>
+      </div>
+
+      <h2>Onde o dinheiro está concentrado</h2>
+      <div class="card">
+        <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+          <div>${buildDonutSVG(ranking, totalGasto)}</div>
+          <div style="flex:1; min-width:200px;">
+            ${ranking.length === 0 ? '' : ranking.map(([id,val],i) => `
+              <div class="legend-item">
+                <span class="legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></span>
+                <span style="flex:1;">${catName(id)}</span>
+                <span class="mono">${fmtMoney(val)}</span>
+                <span class="lanc-meta">(${totalGasto>0 ? (val/totalGasto*100).toFixed(0) : 0}%)</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+
+      <h2 style="margin-top:24px;">Projeção dos Próximos Meses</h2>
+      <p class="subtext">Considera parcelas já lançadas para categorias normais. Para os cartões, mostra a fatura real quando já lançada, ou uma estimativa das compras parceladas em andamento quando ainda não fechou.</p>
+      <div class="card">
+        <table class="mini-table">
+          <tr><th>Mês</th><th>Gasto total (contas normais + faturas já lançadas)</th><th>Estimativa cartões (ainda não fechados)</th></tr>
+          ${proxMeses.map(p => `
+            <tr>
+              <td>${fmtMK(p.mk)}</td>
+              <td class="mono">${fmtMoney(p.total)}</td>
+              <td class="mono lanc-meta">${p.estimativaFatura>0 ? fmtMoney(p.estimativaFatura) : '—'}</td>
+            </tr>
+          `).join('')}
+        </table>
+      </div>
+    `;
+
+    panel.querySelector('#btn-prev-mes').addEventListener('click', () => { resumoCursor.setMonth(resumoCursor.getMonth()-1); renderResumo(panel); });
+    panel.querySelector('#btn-next-mes').addEventListener('click', () => { resumoCursor.setMonth(resumoCursor.getMonth()+1); renderResumo(panel); });
+    panel.querySelector('#btn-salvar-renda').addEventListener('click', async () => {
+      try {
+        const v = parseFloat(panel.querySelector('#f-renda').value) || 0;
+        const { error } = await salvarRenda(mk, v);
+        if (error) throw error;
+        await refrescarEexibir();
+      } catch (err) { mostrarErro(err); }
+    });
+  }
+
+  // ---------- TAB: CONTAS A VENCER ----------
+  function activePlanFor(catId, mk){
+    let best = null;
+    state.lancamentos.filter(l => l.categoriaId===catId && (l.parcelasTotal||1) > 1).forEach(l => {
+      const st = planStatusAt(l, mk);
+      if (!st.finished && st.parcelaAgora >= 1) {
+        if (!best || l.valor > best.valor) best = { l, ...st };
+      }
+    });
+    return best;
+  }
+  function diaStatus(cat, hoje, mk){
+    if (!cat.diaVencimento) return null;
+    if (cat.isFatura) {
+      const lancada = state.faturas[cat.id] && state.faturas[cat.id][mk] !== undefined;
+      if (lancada) return 'paga';
+      const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), cat.diaVencimento);
+      const diff = Math.round((vencimento - hoje)/86400000);
+      if (diff < 0) return 'vencida';
+      if (diff <= 5) return 'atencao';
+      return 'em-dia';
+    }
+    const paga = (state.contasPagas[mk]||[]).includes(cat.id);
+    if (paga) return 'paga';
+    const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), cat.diaVencimento);
+    const diff = Math.round((vencimento - hoje)/86400000);
+    if (diff < 0) return 'vencida';
+    if (diff <= 5) return 'atencao';
+    return 'em-dia';
+  }
+
+  function renderContas(panel){
+    const hoje = new Date(); hoje.setHours(0,0,0,0);
+    const mk = monthKey(hoje);
+    const comData = state.categorias.filter(c => c.diaVencimento);
+    const semData = state.categorias.filter(c => !c.diaVencimento);
+
+    function valorParaExibir(c){
+      if (c.isFatura) {
+        const f = state.faturas[c.id];
+        return (f && f[mk] !== undefined) ? f[mk] : (c.valorEsperado||0);
+      }
+      const plan = activePlanFor(c.id, mk);
+      return plan ? plan.l.valor : (c.valorEsperado||0);
+    }
+
+    const statusMap = {};
+    comData.forEach(c => statusMap[c.id] = diaStatus(c, hoje, mk));
+    const vencidas = comData.filter(c => statusMap[c.id]==='vencida');
+    const atencao = comData.filter(c => statusMap[c.id]==='atencao');
+    const emDia = comData.filter(c => ['em-dia','paga'].includes(statusMap[c.id]));
+
+    function contaCard(c){
+      const status = statusMap[c.id];
+      const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), c.diaVencimento);
+      let stamp = '';
+      if (status === 'vencida') stamp = '<div class="stamp">VENCIDO</div>';
+      else if (status === 'paga') stamp = '<div class="stamp green">PAGO</div>';
+      else if (status === 'atencao') stamp = '<div class="stamp orange">ATENÇÃO</div>';
+      const paga = (state.contasPagas[mk]||[]).includes(c.id);
+      const plan = !c.isFatura ? activePlanFor(c.id, mk) : null;
+      const parcelaInfo = plan ? `<div class="lanc-meta">Parcela ${plan.parcelaAgora} de ${plan.total} — faltam ${Math.max(plan.restante,0)} parcela(s)</div>` : '';
+      const valor = valorParaExibir(c);
+      return `
+        <div class="card">
+          ${stamp}
+          <strong>${c.nome}</strong>${c.isFatura ? '<span class="badge fatura">fatura</span>' : ''}
+          <div class="lanc-meta" style="margin:4px 0 6px 0;">
+            Vence dia ${c.diaVencimento} (${fmtDateBR(`${vencimento.getFullYear()}-${pad2(vencimento.getMonth()+1)}-${pad2(c.diaVencimento)}`)})
+            ${valor ? ' · valor ' + fmtMoney(valor) : ''}
+          </div>
+          ${parcelaInfo}
+          <button class="btn small ${paga ? 'secondary' : ''}" data-toggle-paga="${c.id}" style="margin-top:8px;">
+            ${paga ? 'Desmarcar pagamento' : 'Marcar como paga este mês'}
+          </button>
+        </div>
+      `;
+    }
+
+    const planosAtivos = [];
+    state.lancamentos.forEach(l => {
+      if ((l.parcelasTotal||1) <= 1) return;
+      const st = planStatusAt(l, mk);
+      if (!st.finished) {
+        const cat = getCat(l.categoriaId);
+        const dInicio = parseYMD(l.data);
+        const endDate = new Date(dInicio.getFullYear(), dInicio.getMonth() + (l.parcelasTotal - l.parcelaAtual), 1);
+        planosAtivos.push({ l, cat, st, endMK: monthKey(endDate) });
+      }
+    });
+    planosAtivos.sort((a,b) => (a.cat?a.cat.nome:'').localeCompare(b.cat?b.cat.nome:''));
+
+    panel.innerHTML = `
+      <h2>Contas a Vencer</h2>
+      <p class="subtext">O dia de vencimento é fixo todo mês (você altera manualmente se mudar). Parcelas lançadas em "Lançar Gasto" aparecem aqui sozinhas até o fim da quantidade informada.</p>
+
+      <div class="grid3" style="margin-bottom:20px;">
+        <div class="stat-card neg"><div class="num mono">${vencidas.length}</div><div class="lbl">Vencidas</div></div>
+        <div class="stat-card warn"><div class="num mono">${atencao.length}</div><div class="lbl">Vencem em breve</div></div>
+        <div class="stat-card pos"><div class="num mono">${emDia.length}</div><div class="lbl">Em dia</div></div>
+      </div>
+
+      ${vencidas.length ? `<h2>Precisam de atenção agora</h2>${vencidas.map(contaCard).join('')}` : ''}
+      ${atencao.length ? `<h2>Vencem nos próximos 5 dias</h2>${atencao.map(contaCard).join('')}` : ''}
+      ${emDia.length ? `<h2>Em dia</h2>${emDia.map(contaCard).join('')}` : ''}
+
+      <h2 style="margin-top:26px;">Parcelas em Andamento (visão futura)</h2>
+      ${planosAtivos.length === 0 ? '<div class="card"><div class="empty">Nenhuma parcela em andamento no momento.</div></div>' : planosAtivos.map(p => `
+        <div class="card">
+          <strong>${p.cat ? p.cat.nome : ''}</strong>${p.cat && p.cat.isFatura ? '<span class="badge fatura">só controle, não soma na fatura</span>' : ''}
+          <div class="lanc-meta" style="margin:4px 0;">
+            Parcela ${p.st.parcelaAgora} de ${p.st.total} · ${fmtMoney(p.l.valor)}/mês ·
+            faltam ${Math.max(p.st.restante,0)} parcela(s) (${fmtMoney(Math.max(p.st.restante,0)*p.l.valor)} restantes) ·
+            termina em ${fmtMK(p.endMK)}
+          </div>
+          ${p.l.descricao ? `<div class="lanc-meta">${escapeHtml(p.l.descricao)}</div>` : ''}
+        </div>
+      `).join('')}
+
+      <h2 style="margin-top:26px;">Configurar dia de vencimento e valor esperado</h2>
+      <div class="card">
+        ${state.categorias.map(c => `
+          <div class="grid3" style="align-items:end; border-bottom:1px dashed var(--paper-line); padding-bottom:10px; margin-bottom:10px;">
+            <div style="align-self:center; font-weight:600; font-size:13.5px;">${c.nome}</div>
+            <div><label>Dia do vencimento</label><input type="number" min="1" max="31" data-dia="${c.id}" value="${c.diaVencimento||''}" placeholder="ex: 10"></div>
+            <div><label>Valor esperado (R$)</label><input type="number" step="0.01" min="0" data-valor="${c.id}" value="${c.valorEsperado||''}" placeholder="0,00"></div>
+          </div>
+        `).join('')}
+        <button class="btn small" id="btn-salvar-config">Salvar configurações</button>
+      </div>
+      ${semData.length ? `<p class="subtext">Sem dia configurado ainda: ${semData.map(c=>c.nome).join(', ')}.</p>` : ''}
+
+      <h2 style="margin-top:26px;">Adicionar Nova Categoria</h2>
+      <p class="subtext">Crie categorias além das já existentes (ex.: um novo empréstimo, uma assinatura, etc.).</p>
+      <div class="card">
+        <div class="grid3">
+          <div>
+            <label>Nome da categoria</label>
+            <input type="text" id="nc-nome" placeholder="Ex.: Plano de Saúde">
+          </div>
+          <div>
+            <label>Tipo (opcional)</label>
+            <input type="text" id="nc-tipo" placeholder="Ex.: Recorrente, Empréstimo...">
+          </div>
+          <div>
+            <label>É fatura de cartão?</label>
+            <select id="nc-fatura">
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn small" id="btn-add-categoria">+ Adicionar categoria</button>
+        <span id="nc-msg" style="margin-left:10px; font-size:12.5px; color:var(--stamp-green);"></span>
+      </div>
+    `;
+
+    panel.querySelectorAll('[data-toggle-paga]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const id = btn.dataset.togglePaga;
+          const lista = state.contasPagas[mk] || [];
+          const { error } = await toggleContaPaga(mk, id, !lista.includes(id));
+          if (error) throw error;
+          await refrescarEexibir();
+        } catch (err) { mostrarErro(err); }
+      });
+    });
+    panel.querySelector('#btn-salvar-config').addEventListener('click', async () => {
+      try {
+        for (const c of state.categorias) {
+          const diaInput = panel.querySelector(`[data-dia="${c.id}"]`);
+          const valorInput = panel.querySelector(`[data-valor="${c.id}"]`);
+          const dia = parseInt(diaInput.value, 10);
+          const diaVencimento = (dia >= 1 && dia <= 31) ? dia : null;
+          const valorEsperado = parseFloat(valorInput.value) || 0;
+          const { error } = await salvarConfigCategoria(c.id, diaVencimento, valorEsperado);
+          if (error) throw error;
+        }
+        await refrescarEexibir();
+      } catch (err) { mostrarErro(err); }
+    });
+    panel.querySelector('#btn-add-categoria').addEventListener('click', async () => {
+      const nome = panel.querySelector('#nc-nome').value.trim();
+      const tipo = panel.querySelector('#nc-tipo').value.trim();
+      const isFatura = panel.querySelector('#nc-fatura').value === 'sim';
+      const msg = panel.querySelector('#nc-msg');
+      if (!nome) { msg.style.color = 'var(--stamp-red)'; msg.textContent = 'Digite um nome para a categoria.'; return; }
+      try {
+        const { error } = await criarCategoria(nome, tipo, isFatura);
+        if (error) throw error;
+        msg.style.color = 'var(--stamp-green)'; msg.textContent = 'Categoria criada!';
+        await refrescarEexibir();
+      } catch (err) { mostrarErro(err); }
+    });
+  }
+
+  // ============================================================
+  // BOOT
+  // ============================================================
+  function renderSetupWarning(){
+    document.getElementById('app-root').innerHTML = `
+      <div class="setup-warning">
+        <strong>Configuração pendente.</strong><br><br>
+        Este app ainda não foi ligado ao seu banco de dados. Abra o arquivo .html, encontre as linhas perto do topo do
+        <code>&lt;script&gt;</code> com <code>SUPABASE_URL</code> e <code>SUPABASE_ANON_KEY</code>, e cole os valores
+        do seu projeto Supabase (Project Settings → API). Depois salve e recarregue a página.
+      </div>
+    `;
+  }
+
+  function renderErro(titulo, detalhe){
+    document.getElementById('app-root').innerHTML = `
+      <div class="setup-warning">
+        <strong>${escapeHtml(titulo)}</strong><br><br>
+        ${escapeHtml(detalhe)}
+      </div>
+    `;
+  }
+
+  window.addEventListener('error', function(e){
+    const root = document.getElementById('app-root');
+    if (root && !root.innerHTML.trim()) {
+      renderErro('Ocorreu um erro ao carregar o app', e.message || 'Erro desconhecido.');
+    }
+  });
+
+  (async function init(){
+    try {
+      if (!SUPABASE_URL || SUPABASE_URL.indexOf('COLE_AQUI') === 0 || !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.indexOf('COLE_AQUI') === 0) {
+        renderSetupWarning();
+        return;
+      }
+      if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
+        renderErro(
+          'Não consegui carregar a biblioteca do Supabase',
+          'Isso costuma acontecer por falta de conexão com a internet, um bloqueador de anúncios/script, ou o navegador ' +
+          'usado para abrir o arquivo. Tente: 1) checar sua internet, 2) abrir o arquivo em outro navegador (Chrome ou ' +
+          'Edge), 3) desativar temporariamente bloqueadores de anúncio/rastreamento para este arquivo, e recarregar a página.'
+        );
+        return;
+      }
+
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+      sb.auth.onAuthStateChange(async (event, session) => {
+        try {
+          if (session && session.user) {
+            currentUser = session.user;
+            await fetchAll();
+            render();
+            subscribeRealtime();
+          } else {
+            currentUser = null;
+            unsubscribeRealtime();
+            renderLogin();
+          }
+        } catch (err) {
+          renderErro('Erro ao carregar seus dados', (err && err.message) ? err.message : String(err));
+        }
+      });
+
+      const { data, error } = await sb.auth.getSession();
+      if (error) { renderErro('Erro ao verificar sessão', error.message); return; }
+      if (data.session && data.session.user) {
+        currentUser = data.session.user;
+        await fetchAll();
+        render();
+        subscribeRealtime();
+      } else {
+        renderLogin();
+      }
+
+      setInterval(() => { if (currentUser) onRemoteChange(); }, 20000);
+    } catch (err) {
+      renderErro('Erro inesperado ao iniciar o app', (err && err.message) ? err.message : String(err));
+    }
+  })();
+})();
+</script>
+</body>
+</html>
