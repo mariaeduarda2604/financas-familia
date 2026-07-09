@@ -265,10 +265,8 @@
     });
   }
   async function excluirLancamento(id){ return sb.from('lancamentos').delete().eq('id', id); }
-  async function salvarFaturaEMarcarPaga(categoriaId, mes, valor){
-    const r1 = await sb.from('faturas').upsert({ categoria_id: categoriaId, mes, valor });
-    if (r1.error) return r1;
-    return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId });
+  async function salvarFatura(categoriaId, mes, valor){
+    return sb.from('faturas').upsert({ categoria_id: categoriaId, mes, valor });
   }
   async function salvarRenda(mes, valor){ return sb.from('renda_mensal').upsert({ mes, valor }); }
   async function toggleContaPaga(mes, categoriaId, marcarPaga){
@@ -507,7 +505,7 @@
           const input = panel.querySelector(`#f-fatura-${c.id}`);
           const v = parseFloat(input.value);
           if (input.value !== '' && !isNaN(v)) {
-            const { error } = await salvarFaturaEMarcarPaga(c.id, mkAtual, v);
+            const { error } = await salvarFatura(c.id, mkAtual, v);
             if (error) throw error;
           }
         }
@@ -662,15 +660,6 @@
   }
   function diaStatus(cat, hoje, mk){
     if (!cat.diaVencimento) return null;
-    if (cat.isFatura) {
-      const lancada = state.faturas[cat.id] && state.faturas[cat.id][mk] !== undefined;
-      if (lancada) return 'paga';
-      const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), cat.diaVencimento);
-      const diff = Math.round((vencimento - hoje)/86400000);
-      if (diff < 0) return 'vencida';
-      if (diff <= 5) return 'atencao';
-      return 'em-dia';
-    }
     const paga = (state.contasPagas[mk]||[]).includes(cat.id);
     if (paga) return 'paga';
     const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), cat.diaVencimento);
@@ -712,11 +701,9 @@
       const plan = !c.isFatura ? activePlanFor(c.id, mk) : null;
       const parcelaInfo = plan ? `<div class="lanc-meta">Parcela ${plan.parcelaAgora} de ${plan.total} — faltam ${Math.max(plan.restante,0)} parcela(s)</div>` : '';
       const valor = valorParaExibir(c);
-      const acaoPagamento = c.isFatura
-        ? `<div class="lanc-meta" style="margin-top:8px;">${status === 'paga' ? 'Fatura já lançada este mês.' : 'Para marcar como pago, lance o valor da fatura na aba <strong>Lançar Gasto</strong> → "Fechar Fatura do Cartão".'}</div>`
-        : `<button class="btn small ${paga ? 'secondary' : ''}" data-toggle-paga="${c.id}" style="margin-top:8px;">
-            ${paga ? 'Desmarcar pagamento' : 'Marcar como paga este mês'}
-          </button>`;
+      const notaFatura = c.isFatura
+        ? `<div class="lanc-meta">${(state.faturas[c.id] && state.faturas[c.id][mk] !== undefined) ? 'Fatura já fechada este mês.' : 'Fatura ainda não fechada — lance o valor em Lançar Gasto → "Fechar Fatura do Cartão".'}</div>`
+        : '';
       return `
         <div class="card">
           ${stamp}
@@ -726,7 +713,10 @@
             ${valor ? ' · valor ' + fmtMoney(valor) : ''}
           </div>
           ${parcelaInfo}
-          ${acaoPagamento}
+          ${notaFatura}
+          <button class="btn small ${paga ? 'secondary' : ''}" data-toggle-paga="${c.id}" style="margin-top:8px;">
+            ${paga ? 'Desmarcar pagamento' : 'Marcar como paga este mês'}
+          </button>
         </div>
       `;
     }
