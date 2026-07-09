@@ -241,7 +241,7 @@
     ]);
     if (catR.data && catR.data.length){
       state.categorias = catR.data.map(r => ({
-        id: r.id, nome: r.nome, tipo: r.tipo,
+        id: r.id, nome: r.nome, tipo: r.tipo, grupo: r.grupo || '',
         diaVencimento: r.dia_vencimento, valorEsperado: Number(r.valor_esperado)||0, isFatura: !!r.is_fatura
       }));
     }
@@ -273,19 +273,25 @@
     if (marcarPaga) return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId });
     return sb.from('contas_pagas').delete().eq('mes', mes).eq('categoria_id', categoriaId);
   }
-  async function salvarConfigCategoria(id, diaVencimento, valorEsperado){
-    return sb.from('categorias').update({ dia_vencimento: diaVencimento, valor_esperado: valorEsperado }).eq('id', id);
+  async function salvarConfigCategoria(id, diaVencimento, valorEsperado, grupo){
+    return sb.from('categorias').update({ dia_vencimento: diaVencimento, valor_esperado: valorEsperado, grupo: grupo || null }).eq('id', id);
   }
   function slugify(nome){
     return nome.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
       .toLowerCase().trim().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || ('cat_'+Date.now());
   }
-  async function criarCategoria(nome, tipo, isFatura){
+  async function criarCategoria(nome, tipo, isFatura, grupo){
     let id = slugify(nome);
     const existente = state.categorias.find(c => c.id === id);
     if (existente) id = id + '_' + Math.random().toString(36).slice(2,5);
-    return sb.from('categorias').insert({ id, nome, tipo: tipo || 'Outros', dia_vencimento: null, valor_esperado: 0, is_fatura: !!isFatura });
+    return sb.from('categorias').insert({ id, nome, tipo: tipo || 'Outros', dia_vencimento: null, valor_esperado: 0, is_fatura: !!isFatura, grupo: grupo || null });
   }
+  function gruposExistentes(){
+    const set = new Set();
+    state.categorias.forEach(c => { if (c.grupo && c.grupo.trim()) set.add(c.grupo.trim()); });
+    return Array.from(set).sort();
+  }
+  function grupoDe(c){ return (c.grupo && c.grupo.trim()) ? c.grupo.trim() : c.nome; }
 
   async function refrescarEexibir(){ await fetchAll(); render(); }
 
@@ -553,12 +559,15 @@
     const label = `${MESES[resumoCursor.getMonth()]} de ${resumoCursor.getFullYear()}`;
     const renda = state.rendaPorMes[mk] || 0;
 
-    const porCategoria = {};
+    const porGrupo = {};
     state.categorias.forEach(c => {
       const v = getGastoCategoriaMes(c.id, mk);
-      if (v > 0) porCategoria[c.id] = v;
+      if (v > 0) {
+        const label = grupoDe(c);
+        porGrupo[label] = (porGrupo[label]||0) + v;
+      }
     });
-    const ranking = Object.entries(porCategoria).sort((a,b) => b[1]-a[1]);
+    const ranking = Object.entries(porGrupo).sort((a,b) => b[1]-a[1]);
     const totalGasto = ranking.reduce((s,[,v]) => s+v, 0);
     const saldo = renda - totalGasto;
 
@@ -607,10 +616,10 @@
         <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
           <div>${buildDonutSVG(ranking, totalGasto)}</div>
           <div style="flex:1; min-width:200px;">
-            ${ranking.length === 0 ? '' : ranking.map(([id,val],i) => `
+            ${ranking.length === 0 ? '' : ranking.map(([label,val],i) => `
               <div class="legend-item">
                 <span class="legend-dot" style="background:${PALETTE[i % PALETTE.length]}"></span>
-                <span style="flex:1;">${catName(id)}</span>
+                <span style="flex:1;">${escapeHtml(label)}</span>
                 <span class="mono">${fmtMoney(val)}</span>
                 <span class="lanc-meta">(${totalGasto>0 ? (val/totalGasto*100).toFixed(0) : 0}%)</span>
               </div>
@@ -658,15 +667,29 @@
     });
     return best;
   }
-  function diaStatus(cat, hoje, mk){
-    if (!cat.diaVencimento) return null;
-    const paga = (state.contasPagas[mk]||[]).includes(cat.id);
-    if (paga) return 'paga';
-    const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), cat.diaVencimento);
-    const diff = Math.round((vencimento - hoje)/86400000);
-    if (diff < 0) return 'vencida';
-    if (diff <= 5) return 'atencao';
-    return 'em-dia';
+  function valorCategoriaMes(c, mk){
+    if (c.isFatura) {
+      const f = state.faturas[c.id];
+      return (f && f[mk] !== undefined) ? f[mk] : (c.valorEsperado||0);
+    }
+    const plan = activePlanFor(c.id, mk);
+    return plan ? plan.l.valor : (c.valorEsperado||0);
+  }
+  const MESES_LOOKBACK = 3;
+  function mesesPendentes(c, hoje){
+    if (!c.diaVencimento) return [];
+    const mkAtual = monthKey(hoje);
+    const pendentes = [];
+    for (let i = MESES_LOOKBACK - 1; i >= 0; i--){
+      const mk = addMonthsToMK(mkAtual, -i);
+      const [y, m] = mk.split('-').map(Number);
+      const vencimento = new Date(y, m-1, c.diaVencimento);
+      const pago = (state.contasPagas[mk]||[]).includes(c.id);
+      if (!pago && vencimento <= hoje) {
+        pendentes.push({ mk, vencimento, valor: valorCategoriaMes(c, mk) });
+      }
+    }
+    return pendentes; // do mês mais antigo para o mais recente
   }
 
   function renderContas(panel){
@@ -675,48 +698,76 @@
     const comData = state.categorias.filter(c => c.diaVencimento);
     const semData = state.categorias.filter(c => !c.diaVencimento);
 
-    function valorParaExibir(c){
-      if (c.isFatura) {
-        const f = state.faturas[c.id];
-        return (f && f[mk] !== undefined) ? f[mk] : (c.valorEsperado||0);
-      }
-      const plan = activePlanFor(c.id, mk);
-      return plan ? plan.l.valor : (c.valorEsperado||0);
-    }
+    const pendentesMap = {};
+    comData.forEach(c => { pendentesMap[c.id] = mesesPendentes(c, hoje); });
 
     const statusMap = {};
-    comData.forEach(c => statusMap[c.id] = diaStatus(c, hoje, mk));
+    comData.forEach(c => {
+      const pendentes = pendentesMap[c.id];
+      if (pendentes.length > 0) { statusMap[c.id] = 'vencida'; return; }
+      const pagoAtual = (state.contasPagas[mk]||[]).includes(c.id);
+      const vencimentoAtual = new Date(hoje.getFullYear(), hoje.getMonth(), c.diaVencimento);
+      const diff = Math.round((vencimentoAtual - hoje)/86400000);
+      if (!pagoAtual && diff >= 0 && diff <= 5) statusMap[c.id] = 'atencao';
+      else statusMap[c.id] = 'em-dia';
+    });
     const vencidas = comData.filter(c => statusMap[c.id]==='vencida');
     const atencao = comData.filter(c => statusMap[c.id]==='atencao');
-    const emDia = comData.filter(c => ['em-dia','paga'].includes(statusMap[c.id]));
+    const emDia = comData.filter(c => statusMap[c.id]==='em-dia');
 
     function contaCard(c){
       const status = statusMap[c.id];
-      const vencimento = new Date(hoje.getFullYear(), hoje.getMonth(), c.diaVencimento);
+      const pendentes = pendentesMap[c.id];
+      const pagoAtual = (state.contasPagas[mk]||[]).includes(c.id);
+      const vencimentoAtual = new Date(hoje.getFullYear(), hoje.getMonth(), c.diaVencimento);
       let stamp = '';
-      if (status === 'vencida') stamp = '<div class="stamp">VENCIDO</div>';
-      else if (status === 'paga') stamp = '<div class="stamp green">PAGO</div>';
+      if (status === 'vencida') {
+        const totalAtraso = pendentes.reduce((s,p)=>s+p.valor,0);
+        stamp = `<div class="stamp">VENCIDO${pendentes.length>1 ? ' ('+pendentes.length+'x)' : ''}</div>`;
+      }
       else if (status === 'atencao') stamp = '<div class="stamp orange">ATENÇÃO</div>';
-      const paga = (state.contasPagas[mk]||[]).includes(c.id);
+      else if (pagoAtual) stamp = '<div class="stamp green">PAGO</div>';
       const plan = !c.isFatura ? activePlanFor(c.id, mk) : null;
       const parcelaInfo = plan ? `<div class="lanc-meta">Parcela ${plan.parcelaAgora} de ${plan.total} — faltam ${Math.max(plan.restante,0)} parcela(s)</div>` : '';
-      const valor = valorParaExibir(c);
       const notaFatura = c.isFatura
         ? `<div class="lanc-meta">${(state.faturas[c.id] && state.faturas[c.id][mk] !== undefined) ? 'Fatura já fechada este mês.' : 'Fatura ainda não fechada — lance o valor em Lançar Gasto → "Fechar Fatura do Cartão".'}</div>`
         : '';
+
+      let blocoAtraso = '';
+      if (pendentes.length > 0) {
+        const totalAtraso = pendentes.reduce((s,p)=>s+p.valor,0);
+        blocoAtraso = `
+          <div style="background:#fdeceb; border:1px solid #f3c9c4; border-radius:8px; padding:8px 10px; margin:8px 0;">
+            <div style="color:var(--stamp-red); font-weight:700; font-size:13px; margin-bottom:6px;">
+              Em atraso: ${fmtMoney(totalAtraso)} (${pendentes.length} ${pendentes.length===1?'mês':'meses'})
+            </div>
+            ${pendentes.map(p => `
+              <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:12.5px;">
+                <span>${fmtMK(p.mk)} — ${fmtMoney(p.valor)}</span>
+                <button class="btn small danger" data-toggle-paga="${c.id}" data-mes="${p.mk}">Marcar como pago</button>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      const mostraToggleAtual = !pendentes.some(p => p.mk === mk);
+      const botaoAtual = mostraToggleAtual ? `
+          <button class="btn small ${pagoAtual ? 'secondary' : ''}" data-toggle-paga="${c.id}" data-mes="${mk}" style="margin-top:8px;">
+            ${pagoAtual ? 'Desmarcar pagamento deste mês' : 'Marcar como paga este mês'}
+          </button>` : '';
+
       return `
         <div class="card">
           ${stamp}
           <strong>${c.nome}</strong>${c.isFatura ? '<span class="badge fatura">fatura</span>' : ''}
           <div class="lanc-meta" style="margin:4px 0 6px 0;">
-            Vence dia ${c.diaVencimento} (${fmtDateBR(`${vencimento.getFullYear()}-${pad2(vencimento.getMonth()+1)}-${pad2(c.diaVencimento)}`)})
-            ${valor ? ' · valor ' + fmtMoney(valor) : ''}
+            Vence todo dia ${c.diaVencimento} ${valorCategoriaMes(c, mk) ? '· valor deste mês ' + fmtMoney(valorCategoriaMes(c, mk)) : ''}
           </div>
           ${parcelaInfo}
           ${notaFatura}
-          <button class="btn small ${paga ? 'secondary' : ''}" data-toggle-paga="${c.id}" style="margin-top:8px;">
-            ${paga ? 'Desmarcar pagamento' : 'Marcar como paga este mês'}
-          </button>
+          ${blocoAtraso}
+          ${botaoAtual}
         </div>
       `;
     }
@@ -736,7 +787,7 @@
 
     panel.innerHTML = `
       <h2>Contas a Vencer</h2>
-      <p class="subtext">O dia de vencimento é fixo todo mês (você altera manualmente se mudar). Parcelas lançadas em "Lançar Gasto" aparecem aqui sozinhas até o fim da quantidade informada.</p>
+      <p class="subtext">O dia de vencimento é fixo todo mês. Se um mês passado não foi marcado como pago, ele continua aparecendo aqui como atrasado, somado ao que já está vencendo agora, até você marcar cada mês como pago.</p>
 
       <div class="grid3" style="margin-bottom:20px;">
         <div class="stat-card neg"><div class="num mono">${vencidas.length}</div><div class="lbl">Vencidas</div></div>
@@ -761,13 +812,18 @@
         </div>
       `).join('')}
 
-      <h2 style="margin-top:26px;">Configurar dia de vencimento e valor esperado</h2>
+      <h2 style="margin-top:26px;">Organizar Categorias em Grupos</h2>
+      <p class="subtext">O grupo define como o gráfico do Resumo do Mês agrupa os gastos (ex.: "Empréstimos" juntando Empréstimo Duda, Mercado Pago e Itaú). Deixe em branco para a categoria aparecer sozinha no gráfico.</p>
       <div class="card">
+        <datalist id="grupos-existentes">
+          ${gruposExistentes().map(g => `<option value="${escapeHtml(g)}">`).join('')}
+        </datalist>
         ${state.categorias.map(c => `
-          <div class="grid3" style="align-items:end; border-bottom:1px dashed var(--paper-line); padding-bottom:10px; margin-bottom:10px;">
+          <div class="grid4" style="align-items:end; border-bottom:1px dashed var(--paper-line); padding-bottom:10px; margin-bottom:10px;">
             <div style="align-self:center; font-weight:600; font-size:13.5px;">${c.nome}</div>
             <div><label>Dia do vencimento</label><input type="number" min="1" max="31" data-dia="${c.id}" value="${c.diaVencimento||''}" placeholder="ex: 10"></div>
             <div><label>Valor esperado (R$)</label><input type="number" step="0.01" min="0" data-valor="${c.id}" value="${c.valorEsperado||''}" placeholder="0,00"></div>
+            <div><label>Grupo (gráfico)</label><input type="text" data-grupo="${c.id}" value="${escapeHtml(c.grupo||'')}" list="grupos-existentes" placeholder="Ex.: Empréstimos"></div>
           </div>
         `).join('')}
         <button class="btn small" id="btn-salvar-config">Salvar configurações</button>
@@ -775,9 +831,9 @@
       ${semData.length ? `<p class="subtext">Sem dia configurado ainda: ${semData.map(c=>c.nome).join(', ')}.</p>` : ''}
 
       <h2 style="margin-top:26px;">Adicionar Nova Categoria</h2>
-      <p class="subtext">Crie categorias além das já existentes (ex.: um novo empréstimo, uma assinatura, etc.).</p>
+      <p class="subtext">Crie categorias além das já existentes (ex.: um novo empréstimo, uma assinatura, etc.) e já escolha em qual grupo ela entra no gráfico.</p>
       <div class="card">
-        <div class="grid3">
+        <div class="grid4">
           <div>
             <label>Nome da categoria</label>
             <input type="text" id="nc-nome" placeholder="Ex.: Plano de Saúde">
@@ -785,6 +841,10 @@
           <div>
             <label>Tipo (opcional)</label>
             <input type="text" id="nc-tipo" placeholder="Ex.: Recorrente, Empréstimo...">
+          </div>
+          <div>
+            <label>Grupo (gráfico)</label>
+            <input type="text" id="nc-grupo" list="grupos-existentes" placeholder="Ex.: Residência">
           </div>
           <div>
             <label>É fatura de cartão?</label>
@@ -803,8 +863,9 @@
       btn.addEventListener('click', async () => {
         try {
           const id = btn.dataset.togglePaga;
-          const lista = state.contasPagas[mk] || [];
-          const { error } = await toggleContaPaga(mk, id, !lista.includes(id));
+          const mesAlvo = btn.dataset.mes || mk;
+          const lista = state.contasPagas[mesAlvo] || [];
+          const { error } = await toggleContaPaga(mesAlvo, id, !lista.includes(id));
           if (error) throw error;
           await refrescarEexibir();
         } catch (err) { mostrarErro(err); }
@@ -815,10 +876,12 @@
         for (const c of state.categorias) {
           const diaInput = panel.querySelector(`[data-dia="${c.id}"]`);
           const valorInput = panel.querySelector(`[data-valor="${c.id}"]`);
+          const grupoInput = panel.querySelector(`[data-grupo="${c.id}"]`);
           const dia = parseInt(diaInput.value, 10);
           const diaVencimento = (dia >= 1 && dia <= 31) ? dia : null;
           const valorEsperado = parseFloat(valorInput.value) || 0;
-          const { error } = await salvarConfigCategoria(c.id, diaVencimento, valorEsperado);
+          const grupo = grupoInput.value.trim();
+          const { error } = await salvarConfigCategoria(c.id, diaVencimento, valorEsperado, grupo);
           if (error) throw error;
         }
         await refrescarEexibir();
@@ -827,11 +890,12 @@
     panel.querySelector('#btn-add-categoria').addEventListener('click', async () => {
       const nome = panel.querySelector('#nc-nome').value.trim();
       const tipo = panel.querySelector('#nc-tipo').value.trim();
+      const grupo = panel.querySelector('#nc-grupo').value.trim();
       const isFatura = panel.querySelector('#nc-fatura').value === 'sim';
       const msg = panel.querySelector('#nc-msg');
       if (!nome) { msg.style.color = 'var(--stamp-red)'; msg.textContent = 'Digite um nome para a categoria.'; return; }
       try {
-        const { error } = await criarCategoria(nome, tipo, isFatura);
+        const { error } = await criarCategoria(nome, tipo, isFatura, grupo);
         if (error) throw error;
         msg.style.color = 'var(--stamp-green)'; msg.textContent = 'Categoria criada!';
         await refrescarEexibir();
