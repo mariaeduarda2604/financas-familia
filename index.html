@@ -712,6 +712,11 @@
       const plan = !c.isFatura ? activePlanFor(c.id, mk) : null;
       const parcelaInfo = plan ? `<div class="lanc-meta">Parcela ${plan.parcelaAgora} de ${plan.total} — faltam ${Math.max(plan.restante,0)} parcela(s)</div>` : '';
       const valor = valorParaExibir(c);
+      const acaoPagamento = c.isFatura
+        ? `<div class="lanc-meta" style="margin-top:8px;">${status === 'paga' ? 'Fatura já lançada este mês.' : 'Para marcar como pago, lance o valor da fatura na aba <strong>Lançar Gasto</strong> → "Fechar Fatura do Cartão".'}</div>`
+        : `<button class="btn small ${paga ? 'secondary' : ''}" data-toggle-paga="${c.id}" style="margin-top:8px;">
+            ${paga ? 'Desmarcar pagamento' : 'Marcar como paga este mês'}
+          </button>`;
       return `
         <div class="card">
           ${stamp}
@@ -721,9 +726,7 @@
             ${valor ? ' · valor ' + fmtMoney(valor) : ''}
           </div>
           ${parcelaInfo}
-          <button class="btn small ${paga ? 'secondary' : ''}" data-toggle-paga="${c.id}" style="margin-top:8px;">
-            ${paga ? 'Desmarcar pagamento' : 'Marcar como paga este mês'}
-          </button>
+          ${acaoPagamento}
         </div>
       `;
     }
