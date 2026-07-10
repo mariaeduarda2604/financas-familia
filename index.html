@@ -284,7 +284,7 @@
     (pagasR.data||[]).forEach(r => {
       state.contasPagas[r.mes] = state.contasPagas[r.mes]||[];
       state.contasPagas[r.mes].push(r.categoria_id);
-      state.pagamentosRegistro.push({ mes: r.mes, categoriaId: r.categoria_id, pagoEm: r.pago_em });
+      state.pagamentosRegistro.push({ mes: r.mes, categoriaId: r.categoria_id, pagoEm: r.pago_em, valorPago: (r.valor_pago!==null && r.valor_pago!==undefined) ? Number(r.valor_pago) : null });
     });
     state.faturas = {};
     (faturasR.data||[]).forEach(r => { state.faturas[r.categoria_id] = state.faturas[r.categoria_id]||{}; state.faturas[r.categoria_id][r.mes] = Number(r.valor)||0; });
@@ -298,6 +298,7 @@
     });
   }
   async function excluirLancamento(id){ return sb.from('lancamentos').delete().eq('id', id); }
+  async function atualizarValorLancamento(id, novoValor){ return sb.from('lancamentos').update({ valor: novoValor }).eq('id', id); }
   async function salvarFatura(categoriaId, mes, valor){
     return sb.from('faturas').upsert({ categoria_id: categoriaId, mes, valor });
   }
@@ -305,6 +306,10 @@
   async function toggleContaPaga(mes, categoriaId, marcarPaga){
     if (marcarPaga) return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId, pago_em: new Date().toISOString() });
     return sb.from('contas_pagas').delete().eq('mes', mes).eq('categoria_id', categoriaId);
+  }
+  async function marcarPagoDetalhado(mes, categoriaId, valorPago, dataPagamentoYMD){
+    const dataISO = new Date(dataPagamentoYMD + 'T12:00:00').toISOString();
+    return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId, pago_em: dataISO, valor_pago: valorPago });
   }
   async function salvarConfigCategoria(id, diaVencimento, valorEsperado, grupo){
     return sb.from('categorias').update({ dia_vencimento: diaVencimento, valor_esperado: valorEsperado, grupo: grupo || null }).eq('id', id);
@@ -442,6 +447,7 @@
 
   // ---------- TAB: LANÇAR GASTO ----------
   let mostrarNovaCategoriaLancar = false;
+  let editandoLancamentoId = null;
   function renderLancar(panel){
     const opts = state.categorias.map(c => `<option value="${c.id}">${c.nome}${c.isFatura ? ' (fatura)' : ''}</option>`).join('');
     const cartoes = state.categorias.filter(c => c.isFatura);
@@ -533,14 +539,18 @@
           <div class="grid2" style="margin-top:8px;">
             <div>
               <label>Limite total do cartão (R$)</label>
-              <input type="number" step="0.01" min="0" data-limite="${c.id}" value="${lim.limiteTotal || ''}" placeholder="0,00">
+              <input type="number" step="0.01" min="0" data-limite="${c.id}" data-consumido="${lim.consumido}" value="${lim.limiteTotal || ''}" placeholder="0,00">
             </div>
           </div>
-          <div class="bar-track" style="margin:6px 0 10px 0;"><div class="bar-fill" style="width:${pct}%; background:${pct>=90?'var(--stamp-red)':(pct>=70?'var(--gold)':'var(--ledger-green)')};"></div></div>
+          <div class="bar-track" id="bar-limite-${c.id}" style="margin:6px 0 10px 0;"><div class="bar-fill" style="width:${pct}%; background:${pct>=90?'var(--stamp-red)':(pct>=70?'var(--gold)':'var(--ledger-green)')};"></div></div>
+          <div class="lanc-meta" style="margin-bottom:6px;">
+            ${fmtMoney(lim.limiteTotal)} (limite) − ${fmtMoney(lim.faturaPaga?0:lim.faturaAtual)} (fatura${lim.faturaLancada?'':' estimada'}${lim.faturaPaga?', já paga = não conta':''}) − ${fmtMoney(lim.comprometidoFuturo)} (parcelas futuras) =
+            <strong id="disp-limite-${c.id}" class="mono" style="color:${lim.disponivel<0?'var(--stamp-red)':'var(--stamp-green)'};">${fmtMoney(lim.disponivel)}</strong> disponível
+          </div>
           <div class="grid3">
             <div class="lanc-meta">Fatura ${lim.faturaLancada?'atual':'estimada'}: <strong class="mono">${fmtMoney(lim.faturaAtual)}</strong>${lim.faturaPaga?' (paga)':''}</div>
             <div class="lanc-meta">Comprometido em parcelas futuras: <strong class="mono">${fmtMoney(lim.comprometidoFuturo)}</strong></div>
-            <div class="lanc-meta">Disponível: <strong class="mono" style="color:${lim.disponivel<0?'var(--stamp-red)':'var(--stamp-green)'};">${fmtMoney(lim.disponivel)}</strong></div>
+            <div class="lanc-meta">Consumido total: <strong class="mono">${fmtMoney(lim.consumido)}</strong></div>
           </div>
           <button class="btn small" data-salvar-limite="${c.id}" style="margin-top:8px;">Salvar limite</button>
         </div>
@@ -551,6 +561,21 @@
         ${ultimos.length === 0 ? '<div class="empty">Nenhum gasto lançado ainda.</div>' : ultimos.map(l => {
           const cat = getCat(l.categoriaId);
           const parcelaTxt = (l.parcelasTotal>1) ? `<span class="badge ${cat&&cat.isFatura?'fatura':''}">${l.parcelaAtual}/${l.parcelasTotal}x</span>` : '';
+          if (editandoLancamentoId === l.id) {
+            return `
+            <div class="lancamento-row">
+              <div style="flex:1;">
+                <div>${catName(l.categoriaId)}${parcelaTxt}${l.descricao ? ' — ' + escapeHtml(l.descricao) : ''}</div>
+                <div class="lanc-meta">${l.parcelasTotal>1 ? 'Alterar aqui atualiza o valor de todas as parcelas seguintes.' : ''}</div>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                  <input type="number" step="0.01" min="0" id="edit-valor-${l.id}" value="${l.valor}" style="margin-bottom:0; max-width:140px;">
+                  <button class="btn small" data-salvar-edicao="${l.id}">Salvar</button>
+                  <button class="btn small secondary" data-cancelar-edicao="${l.id}">Cancelar</button>
+                </div>
+              </div>
+            </div>
+          `;
+          }
           return `
           <div class="lancamento-row">
             <div>
@@ -559,12 +584,33 @@
             </div>
             <div style="display:flex; gap:8px; align-items:center;">
               <strong class="mono">${fmtMoney(l.valor)}</strong>
+              <button class="btn small secondary" data-editar="${l.id}">editar</button>
               <button class="btn danger" data-del="${l.id}">excluir</button>
             </div>
           </div>
         `; }).join('')}
       </div>
     `;
+
+    panel.querySelectorAll('[data-editar]').forEach(btn => {
+      btn.addEventListener('click', () => { editandoLancamentoId = btn.dataset.editar; renderLancar(panel); });
+    });
+    panel.querySelectorAll('[data-cancelar-edicao]').forEach(btn => {
+      btn.addEventListener('click', () => { editandoLancamentoId = null; renderLancar(panel); });
+    });
+    panel.querySelectorAll('[data-salvar-edicao]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const input = panel.querySelector(`#edit-valor-${btn.dataset.salvarEdicao}`);
+          const novoValor = parseFloat(input.value);
+          if (!novoValor || novoValor <= 0) { mostrarErro({message:'Informe um valor válido.'}); return; }
+          const { error } = await atualizarValorLancamento(btn.dataset.salvarEdicao, novoValor);
+          if (error) throw error;
+          editandoLancamentoId = null;
+          await refrescarEexibir();
+        } catch (err) { mostrarErro(err); }
+      });
+    });
 
     panel.querySelector('#btn-toggle-nova-cat').addEventListener('click', () => {
       mostrarNovaCategoriaLancar = !mostrarNovaCategoriaLancar;
@@ -587,6 +633,25 @@
         } catch (err) { mostrarErro(err); }
       });
     }
+    panel.querySelectorAll('[data-limite]').forEach(input => {
+      input.addEventListener('input', () => {
+        const id = input.dataset.limite;
+        const consumido = parseFloat(input.dataset.consumido) || 0;
+        const novoLimite = parseFloat(input.value) || 0;
+        const disponivel = novoLimite - consumido;
+        const dispEl = panel.querySelector(`#disp-limite-${id}`);
+        if (dispEl) {
+          dispEl.textContent = fmtMoney(disponivel);
+          dispEl.style.color = disponivel < 0 ? 'var(--stamp-red)' : 'var(--stamp-green)';
+        }
+        const barEl = panel.querySelector(`#bar-limite-${id} .bar-fill`);
+        if (barEl) {
+          const pct = novoLimite > 0 ? Math.min(100, (consumido / novoLimite) * 100) : 0;
+          barEl.style.width = pct + '%';
+          barEl.style.background = pct>=90?'var(--stamp-red)':(pct>=70?'var(--gold)':'var(--ledger-green)');
+        }
+      });
+    });
     panel.querySelectorAll('[data-salvar-limite]').forEach(btn => {
       btn.addEventListener('click', async () => {
         try {
@@ -683,6 +748,17 @@
     const totalGasto = ranking.reduce((s,[,v]) => s+v, 0);
     const saldo = renda - totalGasto;
 
+    // Já pago x Ainda pendente, para o mês em exibição
+    const comDataResumo = state.categorias.filter(c => c.diaVencimento);
+    let totalPagoResumo = 0, totalPendenteResumo = 0;
+    comDataResumo.forEach(c => {
+      const v = valorCategoriaMes(c, mk);
+      const pago = (state.contasPagas[mk]||[]).includes(c.id);
+      if (pago) totalPagoResumo += v; else totalPendenteResumo += v;
+    });
+    const totalContasResumo = totalPagoResumo + totalPendenteResumo;
+    const pctPagoResumo = totalContasResumo > 0 ? (totalPagoResumo/totalContasResumo*100) : 0;
+
     let proxMeses = [];
     for (let i=0;i<6;i++){
       const mkFut = addMonthsToMK(monthKey(new Date()), i);
@@ -721,6 +797,16 @@
         <div class="stat-card"><div class="num mono">${fmtMoney(renda)}</div><div class="lbl">Renda do mês</div></div>
         <div class="stat-card neg"><div class="num mono">${fmtMoney(totalGasto)}</div><div class="lbl">Gastos lançados</div></div>
         <div class="stat-card ${saldo >= 0 ? 'pos' : 'neg'}"><div class="num mono">${fmtMoney(saldo)}</div><div class="lbl">Saldo disponível</div></div>
+      </div>
+
+      <h2>Contas Pagas x Pendentes</h2>
+      <div class="card">
+        <div class="grid2" style="margin-bottom:10px;">
+          <div class="stat-card pos"><div class="num mono">${fmtMoney(totalPagoResumo)}</div><div class="lbl">Já pago</div></div>
+          <div class="stat-card neg"><div class="num mono">${fmtMoney(totalPendenteResumo)}</div><div class="lbl">Ainda pendente</div></div>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pctPagoResumo}%; background:var(--stamp-green);"></div></div>
+        <div class="lanc-meta" style="margin-top:6px;">${pctPagoResumo.toFixed(0)}% das contas com vencimento configurado já pagas em ${label}</div>
       </div>
 
       <h2>Onde o dinheiro está concentrado</h2>
@@ -859,15 +945,22 @@
         const totalAtraso = pendentes.reduce((s,p)=>s+p.valor,0);
         blocoAtraso = `
           <div style="background:#fdeceb; border:1px solid #f3c9c4; border-radius:8px; padding:8px 10px; margin:8px 0;">
-            <div style="color:var(--stamp-red); font-weight:700; font-size:13px; margin-bottom:6px;">
+            <div style="color:var(--stamp-red); font-weight:700; font-size:13px; margin-bottom:8px;">
               Em atraso: ${fmtMoney(totalAtraso)} (${pendentes.length} ${pendentes.length===1?'mês':'meses'})
             </div>
             ${pendentes.map(p => {
               const diasAtraso = Math.round((hoje - p.vencimento)/86400000);
+              const uid = `${c.id}__${p.mk}`;
               return `
-              <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:12.5px;">
-                <span>${fmtMK(p.mk)} — ${fmtMoney(p.valor)} <span class="lanc-meta">(${diasAtraso} dia${diasAtraso===1?'':'s'} de atraso)</span></span>
-                <button class="btn small danger" data-toggle-paga="${c.id}" data-mes="${p.mk}">Marcar como pago</button>
+              <div style="border-bottom:1px dashed #f3c9c4; padding:6px 0; margin-bottom:6px;">
+                <div style="font-size:12.5px; margin-bottom:6px;">
+                  <strong>${fmtMK(p.mk)}</strong> <span class="lanc-meta">— venceu dia ${fmtDateBR(`${p.vencimento.getFullYear()}-${pad2(p.vencimento.getMonth()+1)}-${pad2(p.vencimento.getDate())}`)} · ${diasAtraso} dia${diasAtraso===1?'':'s'} de atraso até hoje</span>
+                </div>
+                <div class="grid3" style="align-items:end; gap:8px;">
+                  <div style="margin-bottom:0;"><label style="margin-bottom:2px;">Valor pago (R$)</label><input type="number" step="0.01" min="0" id="pgv-${uid}" value="${p.valor}" style="margin-bottom:0;"></div>
+                  <div style="margin-bottom:0;"><label style="margin-bottom:2px;">Data em que pagou</label><input type="date" id="pgd-${uid}" value="${todayYMD()}" style="margin-bottom:0;"></div>
+                  <button class="btn small danger" data-marcar-atrasado="${uid}" data-cat="${c.id}" data-mes="${p.mk}">Marcar como pago</button>
+                </div>
               </div>
             `; }).join('')}
           </div>
@@ -909,18 +1002,7 @@
     planosAtivos.sort((a,b) => (a.cat?a.cat.nome:'').localeCompare(b.cat?b.cat.nome:''));
 
     // ---- Pago vs Pendente este mês ----
-    let totalPago = 0, totalAtrasadoGeral = 0, totalAVencerAtual = 0;
-    comData.forEach(c => {
-      const pago = (state.contasPagas[mk]||[]).includes(c.id);
-      const pendentes = pendentesMap[c.id];
-      const emAtrasoEsteMes = pendentes.some(p => p.mk === mk);
-      if (pago) totalPago += valorCategoriaMes(c, mk);
-      pendentes.forEach(p => { totalAtrasadoGeral += p.valor; });
-      if (!pago && !emAtrasoEsteMes) totalAVencerAtual += valorCategoriaMes(c, mk);
-    });
-    const totalPendenteGeral = totalAtrasadoGeral + totalAVencerAtual;
-    const totalGeralContas = totalPago + totalPendenteGeral;
-    const pctPago = totalGeralContas > 0 ? (totalPago/totalGeralContas*100) : 0;
+    const { totalPago, totalAtrasadoGeral, totalAVencerAtual, totalPendenteGeral, pct: pctPago } = calcularPagoPendente(hoje);
 
     // ---- Contas atrasadas pagas este mês (pagamentos em atraso registrados neste mês calendário) ----
     const pagamentosAtrasadosEsteMes = (state.pagamentosRegistro||[]).filter(p => {
@@ -938,7 +1020,7 @@
       const vencimentoCompetencia = new Date(y, m-1, cat.diaVencimento);
       const pagoEmDate = new Date(p.pagoEm);
       const diasAtraso = Math.round((pagoEmDate - vencimentoCompetencia)/86400000);
-      return { cat, mesCompetencia: p.mes, valor: valorCategoriaMes(cat, p.mes), pagoEmDate, diasAtraso };
+      return { cat, mesCompetencia: p.mes, valor: (p.valorPago !== null && p.valorPago !== undefined) ? p.valorPago : valorCategoriaMes(cat, p.mes), pagoEmDate, diasAtraso };
     }).sort((a,b) => b.pagoEmDate - a.pagoEmDate);
 
     panel.innerHTML = `
@@ -1050,6 +1132,22 @@
           const mesAlvo = btn.dataset.mes || mk;
           const lista = state.contasPagas[mesAlvo] || [];
           const { error } = await toggleContaPaga(mesAlvo, id, !lista.includes(id));
+          if (error) throw error;
+          await refrescarEexibir();
+        } catch (err) { mostrarErro(err); }
+      });
+    });
+    panel.querySelectorAll('[data-marcar-atrasado]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const uid = btn.dataset.marcarAtrasado;
+          const categoriaId = btn.dataset.cat;
+          const mesAlvo = btn.dataset.mes;
+          const valorInput = panel.querySelector(`#pgv-${uid}`);
+          const dataInput = panel.querySelector(`#pgd-${uid}`);
+          const valorPago = parseFloat(valorInput.value) || 0;
+          const dataPagamento = dataInput.value || todayYMD();
+          const { error } = await marcarPagoDetalhado(mesAlvo, categoriaId, valorPago, dataPagamento);
           if (error) throw error;
           await refrescarEexibir();
         } catch (err) { mostrarErro(err); }
