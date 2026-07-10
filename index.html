@@ -112,6 +112,7 @@
   #app-root .month-label { font-family: 'Inter', sans-serif; font-weight: 700; font-size: 15px; color: var(--heading); min-width: 160px; text-align: center; }
   #app-root .info-box { background: var(--highlight-bg); border-left: 4px solid var(--gold); padding: 12px 14px; border-radius: 6px; font-size: 12.5px; color: #7a5211; margin-bottom: 16px; }
   #app-root .empty { color: var(--ink-soft); font-size: 13px; font-style: italic; padding: 8px 0; }
+  #app-root .link-btn { background:none; border:none; color: var(--ledger-green-dark); text-decoration: underline; cursor:pointer; font-size:12px; padding:0; font-family:inherit; display:block; }
   #app-root .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-bottom: 6px; color: var(--ink); }
   #app-root .legend-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
   #app-root .mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -167,7 +168,7 @@
   ];
 
   function defaultState(){
-    return { categorias: DEFAULT_CATEGORIAS.map(c => ({...c})), lancamentos: [], rendaPorMes: {}, contasPagas: {}, faturas: {} };
+    return { categorias: DEFAULT_CATEGORIAS.map(c => ({...c})), lancamentos: [], rendaPorMes: {}, contasPagas: {}, faturas: {}, pagamentosRegistro: [] };
   }
 
   let state = defaultState();
@@ -228,6 +229,32 @@
     return { parcelaAgora, total, restante, finished: parcelaAgora > total || passed < 0 };
   }
 
+  function calcularLimiteCartao(c, mk){
+    // Comprometido em parcelas futuras: soma das parcelas AINDA NÃO cobradas (após a deste mês)
+    // de compras parceladas ativas nesse cartão — isso é limite que já está "reservado".
+    let comprometidoFuturo = 0;
+    state.lancamentos.filter(l => l.categoriaId === c.id && (l.parcelasTotal||1) > 1).forEach(l => {
+      const st = planStatusAt(l, mk);
+      if (!st.finished) comprometidoFuturo += Math.max(st.restante, 0) * l.valor;
+    });
+    // Fatura deste mês: valor lançado manualmente (Fechar Fatura), ou estimativa a partir
+    // das parcelas e compras à vista lançadas neste mês, se a fatura ainda não fechou.
+    const faturaLancada = state.faturas[c.id] && state.faturas[c.id][mk] !== undefined;
+    let faturaAtual = 0;
+    if (faturaLancada) {
+      faturaAtual = state.faturas[c.id][mk];
+    } else {
+      state.lancamentos.filter(l => l.categoriaId === c.id).forEach(l => {
+        occurrencesOf(l).forEach(o => { if (o.mk === mk) faturaAtual += Number(l.valor||0); });
+      });
+    }
+    const faturaPaga = (state.contasPagas[mk]||[]).includes(c.id);
+    const consumido = (faturaPaga ? 0 : faturaAtual) + comprometidoFuturo;
+    const limiteTotal = c.limiteTotal || 0;
+    const disponivel = limiteTotal - consumido;
+    return { faturaAtual, faturaLancada, faturaPaga, comprometidoFuturo, consumido, limiteTotal, disponivel };
+  }
+
   // ============================================================
   // CAMADA DE DADOS (Supabase)
   // ============================================================
@@ -242,7 +269,8 @@
     if (catR.data && catR.data.length){
       state.categorias = catR.data.map(r => ({
         id: r.id, nome: r.nome, tipo: r.tipo, grupo: r.grupo || '',
-        diaVencimento: r.dia_vencimento, valorEsperado: Number(r.valor_esperado)||0, isFatura: !!r.is_fatura
+        diaVencimento: r.dia_vencimento, valorEsperado: Number(r.valor_esperado)||0, isFatura: !!r.is_fatura,
+        limiteTotal: Number(r.limite_total)||0
       }));
     }
     state.lancamentos = (lancR.data||[]).map(r => ({
@@ -252,7 +280,12 @@
     state.rendaPorMes = {};
     (rendaR.data||[]).forEach(r => { state.rendaPorMes[r.mes] = Number(r.valor)||0; });
     state.contasPagas = {};
-    (pagasR.data||[]).forEach(r => { state.contasPagas[r.mes] = state.contasPagas[r.mes]||[]; state.contasPagas[r.mes].push(r.categoria_id); });
+    state.pagamentosRegistro = [];
+    (pagasR.data||[]).forEach(r => {
+      state.contasPagas[r.mes] = state.contasPagas[r.mes]||[];
+      state.contasPagas[r.mes].push(r.categoria_id);
+      state.pagamentosRegistro.push({ mes: r.mes, categoriaId: r.categoria_id, pagoEm: r.pago_em });
+    });
     state.faturas = {};
     (faturasR.data||[]).forEach(r => { state.faturas[r.categoria_id] = state.faturas[r.categoria_id]||{}; state.faturas[r.categoria_id][r.mes] = Number(r.valor)||0; });
   }
@@ -270,11 +303,14 @@
   }
   async function salvarRenda(mes, valor){ return sb.from('renda_mensal').upsert({ mes, valor }); }
   async function toggleContaPaga(mes, categoriaId, marcarPaga){
-    if (marcarPaga) return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId });
+    if (marcarPaga) return sb.from('contas_pagas').upsert({ mes, categoria_id: categoriaId, pago_em: new Date().toISOString() });
     return sb.from('contas_pagas').delete().eq('mes', mes).eq('categoria_id', categoriaId);
   }
   async function salvarConfigCategoria(id, diaVencimento, valorEsperado, grupo){
     return sb.from('categorias').update({ dia_vencimento: diaVencimento, valor_esperado: valorEsperado, grupo: grupo || null }).eq('id', id);
+  }
+  async function salvarLimiteCartao(id, limiteTotal){
+    return sb.from('categorias').update({ limite_total: limiteTotal }).eq('id', id);
   }
   function slugify(nome){
     return nome.toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
@@ -405,6 +441,7 @@
   }
 
   // ---------- TAB: LANÇAR GASTO ----------
+  let mostrarNovaCategoriaLancar = false;
   function renderLancar(panel){
     const opts = state.categorias.map(c => `<option value="${c.id}">${c.nome}${c.isFatura ? ' (fatura)' : ''}</option>`).join('');
     const cartoes = state.categorias.filter(c => c.isFatura);
@@ -422,12 +459,30 @@
           <div>
             <label>Categoria</label>
             <select id="f-categoria">${opts}</select>
+            <button type="button" class="link-btn" id="btn-toggle-nova-cat" style="margin:-8px 0 12px 0;">
+              ${mostrarNovaCategoriaLancar ? '– cancelar nova categoria' : '+ criar nova categoria'}
+            </button>
           </div>
           <div>
             <label>Valor da parcela (R$)</label>
             <input type="number" id="f-valor" step="0.01" min="0" placeholder="0,00">
           </div>
         </div>
+        ${mostrarNovaCategoriaLancar ? `
+        <div style="background:var(--highlight-bg); border-radius:8px; padding:12px; margin-bottom:12px;">
+          <div class="grid4">
+            <div><label>Nome</label><input type="text" id="qc-nome" placeholder="Ex.: Plano de Saúde"></div>
+            <div><label>Tipo (opcional)</label><input type="text" id="qc-tipo" placeholder="Ex.: Recorrente"></div>
+            <div><label>Grupo (gráfico)</label><input type="text" id="qc-grupo" list="grupos-existentes-lancar" placeholder="Ex.: Residência"></div>
+            <div><label>É fatura de cartão?</label>
+              <select id="qc-fatura"><option value="nao">Não</option><option value="sim">Sim</option></select>
+            </div>
+          </div>
+          <datalist id="grupos-existentes-lancar">${gruposExistentes().map(g => `<option value="${escapeHtml(g)}">`).join('')}</datalist>
+          <button class="btn small" id="btn-criar-categoria-rapido">Criar categoria</button>
+          <span id="qc-msg" style="margin-left:10px; font-size:12.5px; color:var(--stamp-green);"></span>
+        </div>
+        ` : ''}
         <div class="grid3">
           <div>
             <label>Data desta parcela</label>
@@ -467,6 +522,30 @@
         <button class="btn small" id="btn-salvar-fatura">Salvar fatura(s) deste mês</button>
       </div>
 
+      <h2 style="margin-top:26px;">Limite dos Cartões de Crédito</h2>
+      <p class="subtext">Informe o limite total de cada cartão. O app calcula quanto já está comprometido — considerando a fatura deste mês e todas as parcelas futuras já lançadas — e quanto ainda sobra de limite.</p>
+      ${cartoes.map(c => {
+        const lim = calcularLimiteCartao(c, mkAtual);
+        const pct = lim.limiteTotal > 0 ? Math.min(100, (lim.consumido / lim.limiteTotal) * 100) : 0;
+        return `
+        <div class="card">
+          <strong>${c.nome}</strong>
+          <div class="grid2" style="margin-top:8px;">
+            <div>
+              <label>Limite total do cartão (R$)</label>
+              <input type="number" step="0.01" min="0" data-limite="${c.id}" value="${lim.limiteTotal || ''}" placeholder="0,00">
+            </div>
+          </div>
+          <div class="bar-track" style="margin:6px 0 10px 0;"><div class="bar-fill" style="width:${pct}%; background:${pct>=90?'var(--stamp-red)':(pct>=70?'var(--gold)':'var(--ledger-green)')};"></div></div>
+          <div class="grid3">
+            <div class="lanc-meta">Fatura ${lim.faturaLancada?'atual':'estimada'}: <strong class="mono">${fmtMoney(lim.faturaAtual)}</strong>${lim.faturaPaga?' (paga)':''}</div>
+            <div class="lanc-meta">Comprometido em parcelas futuras: <strong class="mono">${fmtMoney(lim.comprometidoFuturo)}</strong></div>
+            <div class="lanc-meta">Disponível: <strong class="mono" style="color:${lim.disponivel<0?'var(--stamp-red)':'var(--stamp-green)'};">${fmtMoney(lim.disponivel)}</strong></div>
+          </div>
+          <button class="btn small" data-salvar-limite="${c.id}" style="margin-top:8px;">Salvar limite</button>
+        </div>
+      `; }).join('')}
+
       <h2 style="margin-top:26px;">Últimos Lançamentos</h2>
       <div class="card">
         ${ultimos.length === 0 ? '<div class="empty">Nenhum gasto lançado ainda.</div>' : ultimos.map(l => {
@@ -486,6 +565,39 @@
         `; }).join('')}
       </div>
     `;
+
+    panel.querySelector('#btn-toggle-nova-cat').addEventListener('click', () => {
+      mostrarNovaCategoriaLancar = !mostrarNovaCategoriaLancar;
+      renderLancar(panel);
+    });
+    const btnCriarRapido = panel.querySelector('#btn-criar-categoria-rapido');
+    if (btnCriarRapido) {
+      btnCriarRapido.addEventListener('click', async () => {
+        const nome = panel.querySelector('#qc-nome').value.trim();
+        const tipo = panel.querySelector('#qc-tipo').value.trim();
+        const grupo = panel.querySelector('#qc-grupo').value.trim();
+        const isFatura = panel.querySelector('#qc-fatura').value === 'sim';
+        const msg = panel.querySelector('#qc-msg');
+        if (!nome) { msg.style.color = 'var(--stamp-red)'; msg.textContent = 'Digite um nome.'; return; }
+        try {
+          const { error } = await criarCategoria(nome, tipo, isFatura, grupo);
+          if (error) throw error;
+          mostrarNovaCategoriaLancar = false;
+          await refrescarEexibir();
+        } catch (err) { mostrarErro(err); }
+      });
+    }
+    panel.querySelectorAll('[data-salvar-limite]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const input = panel.querySelector(`[data-limite="${btn.dataset.salvarLimite}"]`);
+          const valor = parseFloat(input.value) || 0;
+          const { error } = await salvarLimiteCartao(btn.dataset.salvarLimite, valor);
+          if (error) throw error;
+          await refrescarEexibir();
+        } catch (err) { mostrarErro(err); }
+      });
+    });
 
     panel.querySelector('#btn-lancar').addEventListener('click', async () => {
       const categoriaId = panel.querySelector('#f-categoria').value;
@@ -720,9 +832,9 @@
       const pendentes = pendentesMap[c.id];
       const pagoAtual = (state.contasPagas[mk]||[]).includes(c.id);
       const vencimentoAtual = new Date(hoje.getFullYear(), hoje.getMonth(), c.diaVencimento);
+      const diffAtual = Math.round((vencimentoAtual - hoje)/86400000);
       let stamp = '';
       if (status === 'vencida') {
-        const totalAtraso = pendentes.reduce((s,p)=>s+p.valor,0);
         stamp = `<div class="stamp">VENCIDO${pendentes.length>1 ? ' ('+pendentes.length+'x)' : ''}</div>`;
       }
       else if (status === 'atencao') stamp = '<div class="stamp orange">ATENÇÃO</div>';
@@ -733,6 +845,15 @@
         ? `<div class="lanc-meta">${(state.faturas[c.id] && state.faturas[c.id][mk] !== undefined) ? 'Fatura já fechada este mês.' : 'Fatura ainda não fechada — lance o valor em Lançar Gasto → "Fechar Fatura do Cartão".'}</div>`
         : '';
 
+      let detalheVencimento;
+      if (status === 'atencao') {
+        detalheVencimento = `<strong style="color:var(--gold);">Vence em ${diffAtual} dia${diffAtual===1?'':'s'}</strong> (${fmtDateBR(`${vencimentoAtual.getFullYear()}-${pad2(vencimentoAtual.getMonth()+1)}-${pad2(c.diaVencimento)}`)})`;
+      } else if (status === 'em-dia' && !pagoAtual) {
+        detalheVencimento = `Vence em ${diffAtual} dia${diffAtual===1?'':'s'} (${fmtDateBR(`${vencimentoAtual.getFullYear()}-${pad2(vencimentoAtual.getMonth()+1)}-${pad2(c.diaVencimento)}`)})`;
+      } else {
+        detalheVencimento = `Vence todo dia ${c.diaVencimento}`;
+      }
+
       let blocoAtraso = '';
       if (pendentes.length > 0) {
         const totalAtraso = pendentes.reduce((s,p)=>s+p.valor,0);
@@ -741,12 +862,14 @@
             <div style="color:var(--stamp-red); font-weight:700; font-size:13px; margin-bottom:6px;">
               Em atraso: ${fmtMoney(totalAtraso)} (${pendentes.length} ${pendentes.length===1?'mês':'meses'})
             </div>
-            ${pendentes.map(p => `
+            ${pendentes.map(p => {
+              const diasAtraso = Math.round((hoje - p.vencimento)/86400000);
+              return `
               <div style="display:flex; justify-content:space-between; align-items:center; padding:3px 0; font-size:12.5px;">
-                <span>${fmtMK(p.mk)} — ${fmtMoney(p.valor)}</span>
+                <span>${fmtMK(p.mk)} — ${fmtMoney(p.valor)} <span class="lanc-meta">(${diasAtraso} dia${diasAtraso===1?'':'s'} de atraso)</span></span>
                 <button class="btn small danger" data-toggle-paga="${c.id}" data-mes="${p.mk}">Marcar como pago</button>
               </div>
-            `).join('')}
+            `; }).join('')}
           </div>
         `;
       }
@@ -762,7 +885,7 @@
           ${stamp}
           <strong>${c.nome}</strong>${c.isFatura ? '<span class="badge fatura">fatura</span>' : ''}
           <div class="lanc-meta" style="margin:4px 0 6px 0;">
-            Vence todo dia ${c.diaVencimento} ${valorCategoriaMes(c, mk) ? '· valor deste mês ' + fmtMoney(valorCategoriaMes(c, mk)) : ''}
+            ${detalheVencimento} ${valorCategoriaMes(c, mk) ? '· valor deste mês ' + fmtMoney(valorCategoriaMes(c, mk)) : ''}
           </div>
           ${parcelaInfo}
           ${notaFatura}
@@ -785,6 +908,39 @@
     });
     planosAtivos.sort((a,b) => (a.cat?a.cat.nome:'').localeCompare(b.cat?b.cat.nome:''));
 
+    // ---- Pago vs Pendente este mês ----
+    let totalPago = 0, totalAtrasadoGeral = 0, totalAVencerAtual = 0;
+    comData.forEach(c => {
+      const pago = (state.contasPagas[mk]||[]).includes(c.id);
+      const pendentes = pendentesMap[c.id];
+      const emAtrasoEsteMes = pendentes.some(p => p.mk === mk);
+      if (pago) totalPago += valorCategoriaMes(c, mk);
+      pendentes.forEach(p => { totalAtrasadoGeral += p.valor; });
+      if (!pago && !emAtrasoEsteMes) totalAVencerAtual += valorCategoriaMes(c, mk);
+    });
+    const totalPendenteGeral = totalAtrasadoGeral + totalAVencerAtual;
+    const totalGeralContas = totalPago + totalPendenteGeral;
+    const pctPago = totalGeralContas > 0 ? (totalPago/totalGeralContas*100) : 0;
+
+    // ---- Contas atrasadas pagas este mês (pagamentos em atraso registrados neste mês calendário) ----
+    const pagamentosAtrasadosEsteMes = (state.pagamentosRegistro||[]).filter(p => {
+      if (!p.pagoEm) return false;
+      const pagoEmDate = new Date(p.pagoEm);
+      if (monthKey(pagoEmDate) !== mk) return false;
+      const cat = getCat(p.categoriaId);
+      if (!cat || !cat.diaVencimento) return false;
+      const [y,m] = p.mes.split('-').map(Number);
+      const vencimentoCompetencia = new Date(y, m-1, cat.diaVencimento);
+      return pagoEmDate > vencimentoCompetencia;
+    }).map(p => {
+      const cat = getCat(p.categoriaId);
+      const [y,m] = p.mes.split('-').map(Number);
+      const vencimentoCompetencia = new Date(y, m-1, cat.diaVencimento);
+      const pagoEmDate = new Date(p.pagoEm);
+      const diasAtraso = Math.round((pagoEmDate - vencimentoCompetencia)/86400000);
+      return { cat, mesCompetencia: p.mes, valor: valorCategoriaMes(cat, p.mes), pagoEmDate, diasAtraso };
+    }).sort((a,b) => b.pagoEmDate - a.pagoEmDate);
+
     panel.innerHTML = `
       <h2>Contas a Vencer</h2>
       <p class="subtext">O dia de vencimento é fixo todo mês. Se um mês passado não foi marcado como pago, ele continua aparecendo aqui como atrasado, somado ao que já está vencendo agora, até você marcar cada mês como pago.</p>
@@ -795,9 +951,37 @@
         <div class="stat-card pos"><div class="num mono">${emDia.length}</div><div class="lbl">Em dia</div></div>
       </div>
 
+      <h2>Contas Pagas x Pendentes ${fmtMK(mk)}</h2>
+      <div class="card">
+        <div class="grid2" style="margin-bottom:10px;">
+          <div class="stat-card pos"><div class="num mono">${fmtMoney(totalPago)}</div><div class="lbl">Já pago</div></div>
+          <div class="stat-card neg"><div class="num mono">${fmtMoney(totalPendenteGeral)}</div><div class="lbl">Ainda pendente</div></div>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pctPago}%; background:var(--stamp-green);"></div></div>
+        <div class="lanc-meta" style="margin-top:6px;">
+          ${pctPago.toFixed(0)}% do total de contas com vencimento configurado já está pago
+          ${totalAtrasadoGeral > 0 ? ' · ' + fmtMoney(totalAtrasadoGeral) + ' em atraso' : ''}
+        </div>
+      </div>
+
       ${vencidas.length ? `<h2>Precisam de atenção agora</h2>${vencidas.map(contaCard).join('')}` : ''}
       ${atencao.length ? `<h2>Vencem nos próximos 5 dias</h2>${atencao.map(contaCard).join('')}` : ''}
       ${emDia.length ? `<h2>Em dia</h2>${emDia.map(contaCard).join('')}` : ''}
+
+      <h2 style="margin-top:26px;">Contas Atrasadas Pagas Este Mês</h2>
+      ${pagamentosAtrasadosEsteMes.length === 0 ? '<div class="card"><div class="empty">Nenhum pagamento em atraso registrado este mês.</div></div>' : `
+        <div class="card">
+          ${pagamentosAtrasadosEsteMes.map(p => `
+            <div class="lancamento-row">
+              <div>
+                <div>${p.cat ? p.cat.nome : ''} <span class="lanc-meta">(referente a ${fmtMK(p.mesCompetencia)})</span></div>
+                <div class="lanc-meta">Pago em ${fmtDateBR(`${p.pagoEmDate.getFullYear()}-${pad2(p.pagoEmDate.getMonth()+1)}-${pad2(p.pagoEmDate.getDate())}`)} · ${p.diasAtraso} dia${p.diasAtraso===1?'':'s'} de atraso</div>
+              </div>
+              <strong class="mono">${fmtMoney(p.valor)}</strong>
+            </div>
+          `).join('')}
+        </div>
+      `}
 
       <h2 style="margin-top:26px;">Parcelas em Andamento (visão futura)</h2>
       ${planosAtivos.length === 0 ? '<div class="card"><div class="empty">Nenhuma parcela em andamento no momento.</div></div>' : planosAtivos.map(p => `
