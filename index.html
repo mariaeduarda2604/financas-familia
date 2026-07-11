@@ -890,6 +890,24 @@
     return pendentes; // do mês mais antigo para o mais recente
   }
 
+  function calcularPagoPendente(hoje){
+    const mk = monthKey(hoje);
+    const comData = state.categorias.filter(c => c.diaVencimento);
+    let totalPago = 0, totalAtrasadoGeral = 0, totalAVencerAtual = 0;
+    comData.forEach(c => {
+      const pendentes = mesesPendentes(c, hoje);
+      const pago = (state.contasPagas[mk]||[]).includes(c.id);
+      const emAtrasoEsteMes = pendentes.some(p => p.mk === mk);
+      if (pago) totalPago += valorCategoriaMes(c, mk);
+      pendentes.forEach(p => { totalAtrasadoGeral += p.valor; });
+      if (!pago && !emAtrasoEsteMes) totalAVencerAtual += valorCategoriaMes(c, mk);
+    });
+    const totalPendenteGeral = totalAtrasadoGeral + totalAVencerAtual;
+    const totalGeral = totalPago + totalPendenteGeral;
+    const pct = totalGeral > 0 ? (totalPago/totalGeral*100) : 0;
+    return { totalPago, totalAtrasadoGeral, totalAVencerAtual, totalPendenteGeral, pct };
+  }
+
   function renderContas(panel){
     const hoje = new Date(); hoje.setHours(0,0,0,0);
     const mk = monthKey(hoje);
